@@ -107,6 +107,16 @@ const translations = {
         'common.test': 'Test',
         'llm.tooltip': 'Rewrite the prompt with an LLM (Settings → Prompt LLM)',
         'llm.error': 'Prompt enhancement failed: ',
+        'settings.higgsfield': 'Higgsfield',
+        'settings.hfCredentialLabel': 'API credential (KEY_ID:KEY_SECRET)',
+        'settings.hfPlaceholder': 'Paste the credential from console.higgsfield.ai',
+        'settings.hfNote': 'Pay-per-generation against your Higgsfield USD balance — separate from your higgsfield.ai plan. The secret is encrypted by macOS Keychain in the main process and never reaches this window.',
+        'settings.hfSaved': 'Saved credential: ',
+        'settings.hfNone': 'No credential saved.',
+        'settings.hfCleared': 'Credential removed.',
+        'settings.hfClear': 'Remove',
+        'hf.source': 'Higgsfield',
+        'hf.noModel': 'Select a Higgsfield model first.',
 
         // Auth Modal
         'auth.title': 'Muapi API Key Required',
@@ -320,6 +330,16 @@ const translations = {
         'common.test': '测试',
         'llm.tooltip': '用 LLM 重写提示词（设置 → 提示词 LLM）',
         'llm.error': '提示词优化失败：',
+        'settings.higgsfield': 'Higgsfield',
+        'settings.hfCredentialLabel': 'API 凭证（KEY_ID:KEY_SECRET）',
+        'settings.hfPlaceholder': '粘贴来自 console.higgsfield.ai 的凭证',
+        'settings.hfNote': '按次计费，使用你的 Higgsfield 美元余额，与 higgsfield.ai 套餐相互独立。密钥由 macOS 钥匙串在主进程中加密，不会进入此窗口。',
+        'settings.hfSaved': '已保存凭证：',
+        'settings.hfNone': '未保存凭证。',
+        'settings.hfCleared': '凭证已删除。',
+        'settings.hfClear': '删除',
+        'hf.source': 'Higgsfield',
+        'hf.noModel': '请先选择一个 Higgsfield 模型。',
 
         // Auth Modal
         'auth.title': '需要 Muapi API 密钥',

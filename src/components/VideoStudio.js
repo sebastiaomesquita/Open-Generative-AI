@@ -7,6 +7,24 @@ import { createUploadPicker } from './UploadPicker.js';
 import { savePendingJob, removePendingJob, getPendingJobs } from '../lib/pendingJobs.js';
 import { localAI, isLocalAIAvailable } from '../lib/localInferenceClient.js';
 import { isWan2gpModelId, getLocalModelById, localT2VModels, localI2VModels } from '../lib/localModels.js';
+import { higgsfield, isHiggsfieldAvailable } from '../lib/higgsfieldClient.js';
+import { HIGGSFIELD_VIDEO_MODELS, isHiggsfieldModelId, getHiggsfieldModelById } from '../lib/higgsfieldModels.js';
+import { SettingsModal } from './SettingsModal.js';
+
+// Promotes a Higgsfield catalogue entry into the `inputs`-shaped descriptor
+// the Video Studio dropdowns expect, same trick as adaptLocalToVideoEntry.
+const adaptHiggsfieldToVideoEntry = (m) => ({
+    id: m.id,
+    name: m.name,
+    provider: 'higgsfield',
+    hasPrompt: true,
+    promptRequired: !m.needsImage,
+    inputs: {
+        prompt: { type: 'string', name: 'prompt', title: 'Prompt' },
+        aspect_ratio: { type: 'string', name: 'aspect_ratio', title: 'Aspect ratio', enum: m.aspectRatios || ['16:9'], default: (m.aspectRatios || ['16:9'])[0] },
+        duration: { type: 'integer', name: 'duration', title: 'Duration', enum: m.durations || [5], default: (m.durations || [5])[0] },
+    },
+});
 
 // Promotes a wan2gp catalog entry (lib/localModels.js shape) into the
 // `inputs`-shaped descriptor the Video Studio dropdowns/controls expect.
@@ -30,8 +48,13 @@ export function VideoStudio() {
     // reads from these arrays, so they need to be present from init.
     const localT2V = isLocalAIAvailable() ? localT2VModels.map(adaptLocalToVideoEntry) : [];
     const localI2V = isLocalAIAvailable() ? localI2VModels.map(adaptLocalToVideoEntry) : [];
-    const allT2V = [...t2vModels, ...localT2V];
-    const allI2V = [...i2vModels, ...localI2V];
+    // Higgsfield entries only exist in the desktop app: the credential and the
+    // SDK both live in the main process.
+    const hfAvailable = isHiggsfieldAvailable();
+    const hfT2V = hfAvailable ? HIGGSFIELD_VIDEO_MODELS.filter((m) => !m.needsImage).map(adaptHiggsfieldToVideoEntry) : [];
+    const hfI2V = hfAvailable ? HIGGSFIELD_VIDEO_MODELS.filter((m) => m.needsImage).map(adaptHiggsfieldToVideoEntry) : [];
+    const allT2V = [...t2vModels, ...localT2V, ...hfT2V];
+    const allI2V = [...i2vModels, ...localI2V, ...hfI2V];
 
     // --- State ---
     const defaultModel = allT2V[0];
@@ -171,8 +194,10 @@ export function VideoStudio() {
         },
         // Route the upload through the configured Wan2GP server when the active
         // model is local; otherwise fall back to the Muapi-hosted upload.
-        uploadFn: (file) => isWan2gpModelId(selectedModel) ? localAI.uploadFileToWan2gp(file) : muapi.uploadFile(file),
-        requireApiKey: () => !isWan2gpModelId(selectedModel),
+        uploadFn: (file) => isWan2gpModelId(selectedModel) ? localAI.uploadFileToWan2gp(file)
+            : isHiggsfieldModelId(selectedModel) ? higgsfield.uploadImage(file)
+            : muapi.uploadFile(file),
+        requireApiKey: () => !isWan2gpModelId(selectedModel) && !isHiggsfieldModelId(selectedModel),
     });
     topRow.appendChild(picker.trigger);
     container.appendChild(picker.panel);
@@ -1118,9 +1143,15 @@ export function VideoStudio() {
         }
 
         const isLocal = isWan2gpModelId(selectedModel);
+        const isHf = isHiggsfieldModelId(selectedModel);
 
-        // Local Wan2GP generations don't go through Muapi — skip the auth gate.
-        if (!isLocal) {
+        if (isHf && !(await higgsfield.isConfigured())) {
+            document.body.appendChild(SettingsModal(null, 'higgsfield'));
+            return;
+        }
+
+        // Local Wan2GP and Higgsfield generations don't go through Muapi — skip the auth gate.
+        if (!isLocal && !isHf) {
             const apiKey = localStorage.getItem('muapi_key');
             if (!apiKey) {
                 AuthModal(() => generateBtn.click());
@@ -1134,7 +1165,7 @@ export function VideoStudio() {
 
         // For local generations, surface step progress in the button label.
         let unsubscribeProgress = null;
-        if (isLocal) {
+        if (isLocal || isHf) {
             unsubscribeProgress = localAI.onProgress(({ status, progress, message }) => {
                 const pct = typeof progress === 'number' ? Math.round(progress * 100) : null;
                 const label = message || `${status || t('common.generating')}${pct != null ? ` ${pct}%` : '...'}`;
@@ -1152,6 +1183,34 @@ export function VideoStudio() {
         };
 
         try {
+            // ─── Higgsfield API path ─────────────────────────────────────────
+            if (isHf) {
+                const hm = getHiggsfieldModelById(selectedModel);
+                const res = await higgsfield.generate({
+                    model: selectedModel,
+                    prompt: prompt || '',
+                    aspect_ratio: selectedAr,
+                    duration: selectedDuration,
+                    image_url: uploadedImageUrl || undefined,
+                });
+                if (!res?.url) throw new Error('No video URL returned by Higgsfield');
+                lastGenerationId = null;
+                lastGenerationModel = null;
+                addToHistory({
+                    id: res.requestId || Date.now().toString(),
+                    url: res.url,
+                    prompt,
+                    model: selectedModel,
+                    aspect_ratio: selectedAr,
+                    duration: selectedDuration,
+                    timestamp: new Date().toISOString(),
+                });
+                showVideoInCanvas(res.url, selectedModel);
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = t('common.generate');
+                return;
+            }
+
             // ─── Local Wan2GP path ───────────────────────────────────────────
             // Uploaded image URLs were minted by uploadFileToWan2gp(), so
             // wan2gpProvider can rehydrate the Gradio file descriptor.

@@ -2,6 +2,7 @@ const { app, BrowserWindow, shell, dialog } = require('electron');
 const path = require('path');
 const { register: registerLocalInference } = require('./lib/localInference');
 const { register: registerWan2gp } = require('./lib/wan2gpProvider');
+const { register: registerHiggsfield } = require('./lib/higgsfieldProvider');
 
 process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
@@ -73,8 +74,9 @@ app.whenReady().then(() => {
     try {
         registerLocalInference();
         registerWan2gp();
+        registerHiggsfield();
     } catch (err) {
-        console.error('Failed to register local-ai/wan2gp handlers:', err);
+        console.error('Failed to register local-ai/wan2gp/higgsfield handlers:', err);
         dialog.showErrorBox(
             'Local AI features unavailable',
             `Open Generative AI started, but local model support failed to initialize:\n\n${err.message}`

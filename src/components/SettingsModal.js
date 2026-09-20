@@ -2,6 +2,7 @@ import { LocalModelManager } from './LocalModelManager.js';
 import { isLocalAIAvailable } from '../lib/localInferenceClient.js';
 import { t } from '../lib/i18n.js';
 import { getLlmSettings, saveLlmSettings, enhancePrompt, normalizeBaseUrl, LLM_DEFAULTS } from '../lib/promptLlm.js';
+import { higgsfield, isHiggsfieldAvailable } from '../lib/higgsfieldClient.js';
 
 export function SettingsModal(onClose, initialTab = 'api') {
     const overlay = document.createElement('div');
@@ -25,6 +26,7 @@ export function SettingsModal(onClose, initialTab = 'api') {
     const TABS = [
         { id: 'api', label: t('settings.apiKey') },
         { id: 'llm', label: t('settings.llm') },
+        ...(isHiggsfieldAvailable() ? [{ id: 'higgsfield', label: t('settings.higgsfield') }] : []),
         ...(isLocalAIAvailable() ? [{ id: 'local', label: t('settings.localModels') }] : []),
     ];
 
@@ -104,6 +106,36 @@ export function SettingsModal(onClose, initialTab = 'api') {
         model: llmPanel.querySelector('#llm-model').value,
     });
 
+    // ── Tab: Higgsfield API ───────────────────────────────────────────────────
+    const hfPanel = document.createElement('div');
+    hfPanel.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:0.75rem;">
+            <div>
+                <label style="${llmLabel}">${t('settings.hfCredentialLabel')}</label>
+                <input id="hf-credential" type="password" style="${llmInput}" placeholder="${t('settings.hfPlaceholder')}" spellcheck="false">
+            </div>
+            <p id="hf-saved-state" style="font-size:0.75rem;color:rgba(255,255,255,0.6);margin:0;"></p>
+            <p style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin:0;">${t('settings.hfNote')}</p>
+            <p id="hf-test-status" style="font-size:0.75rem;color:rgba(255,255,255,0.6);margin:0;min-height:1.2em;white-space:pre-wrap;"></p>
+            <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.5rem;">
+                <button id="hf-clear-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:none;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.45);font-size:0.75rem;font-weight:700;cursor:pointer;">${t('settings.hfClear')}</button>
+                <button id="hf-test-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:none;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-size:0.75rem;font-weight:700;cursor:pointer;">${t('common.test')}</button>
+                <button id="hf-save-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:var(--color-primary,#22d3ee);color:#000;font-size:0.75rem;font-weight:700;cursor:pointer;border:none;">${t('common.save')}</button>
+            </div>
+        </div>
+    `;
+    const refreshHfState = async () => {
+        const el = hfPanel.querySelector('#hf-saved-state');
+        if (!el) return;
+        try {
+            const st = await higgsfield.status();
+            el.textContent = st.configured ? `${t('settings.hfSaved')}${st.keyId}` : t('settings.hfNone');
+        } catch {
+            el.textContent = t('settings.hfNone');
+        }
+    };
+    if (isHiggsfieldAvailable()) refreshHfState();
+
     // ── Tab: Local Models ─────────────────────────────────────────────────────
     const localPanel = LocalModelManager();
 
@@ -125,6 +157,7 @@ export function SettingsModal(onClose, initialTab = 'api') {
 
         if (id === 'api') body.appendChild(apiPanel);
         if (id === 'llm') body.appendChild(llmPanel);
+        if (id === 'higgsfield') body.appendChild(hfPanel);
         if (id === 'local') body.appendChild(localPanel);
     };
 
@@ -172,6 +205,43 @@ export function SettingsModal(onClose, initialTab = 'api') {
             btn.disabled = false;
         }
     };
+
+    // ── Higgsfield handlers ───────────────────────────────────────────────────
+    if (isHiggsfieldAvailable()) {
+        const hfStatus = hfPanel.querySelector('#hf-test-status');
+        const hfInput = hfPanel.querySelector('#hf-credential');
+        hfPanel.querySelector('#hf-save-btn').onclick = async () => {
+            const raw = hfInput.value.trim();
+            if (!raw) { hfStatus.textContent = t('settings.hfNone'); return; }
+            try {
+                await higgsfield.setCredentials(raw);
+                hfInput.value = '';
+                await refreshHfState();
+                close();
+            } catch (err) {
+                hfStatus.textContent = err?.message || String(err);
+            }
+        };
+        hfPanel.querySelector('#hf-test-btn').onclick = async () => {
+            const btn = hfPanel.querySelector('#hf-test-btn');
+            btn.disabled = true;
+            hfStatus.textContent = t('common.loading');
+            try {
+                const res = await higgsfield.test(hfInput.value.trim() || undefined);
+                hfStatus.textContent = (res.ok ? t('settings.llmTestOk') : t('settings.llmTestFail')) + res.message;
+            } catch (err) {
+                hfStatus.textContent = t('settings.llmTestFail') + (err?.message || err);
+            } finally {
+                btn.disabled = false;
+            }
+        };
+        hfPanel.querySelector('#hf-clear-btn').onclick = async () => {
+            await higgsfield.clearCredentials();
+            hfInput.value = '';
+            hfStatus.textContent = t('settings.hfCleared');
+            await refreshHfState();
+        };
+    }
 
     header.querySelector('#settings-close-btn').onclick = close;
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });

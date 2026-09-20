@@ -27,6 +27,18 @@ contextBridge.exposeInMainWorld('localAI', {
         uploadFile: (payload) => ipcRenderer.invoke('wan2gp:upload-file', payload),
     },
 
+    // ── Higgsfield API (cloud, credential stays in the main process) ───────
+    higgsfield: {
+        status:      () => ipcRenderer.invoke('higgsfield:status'),
+        setCredentials: (raw) => ipcRenderer.invoke('higgsfield:set-credentials', raw),
+        clearCredentials: () => ipcRenderer.invoke('higgsfield:clear-credentials'),
+        test:        (raw) => ipcRenderer.invoke('higgsfield:test', raw),
+        listModels:  () => ipcRenderer.invoke('higgsfield:list-models'),
+        uploadImage: (payload) => ipcRenderer.invoke('higgsfield:upload-image', payload),
+        generate:    (params) => ipcRenderer.invoke('higgsfield:generate', params),
+        cancelGeneration: () => ipcRenderer.invoke('higgsfield:cancel-generation'),
+    },
+
     // Progress events — both engines emit on local-ai:progress
     onProgress: (callback) => {
         const listener = (_, data) => callback(data);

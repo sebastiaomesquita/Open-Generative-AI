@@ -1,5 +1,8 @@
 import { muapi } from '../lib/muapi.js';
 import { EnhanceButton } from './EnhanceButton.js';
+import { higgsfield, isHiggsfieldAvailable } from '../lib/higgsfieldClient.js';
+import { HIGGSFIELD_IMAGE_MODELS } from '../lib/higgsfieldModels.js';
+import { SettingsModal } from './SettingsModal.js';
 import {
     t2iModels, getAspectRatiosForModel, getResolutionsForModel, getQualityFieldForModel,
     i2iModels, getAspectRatiosForI2IModel, getResolutionsForI2IModel, getQualityFieldForI2IModel,
@@ -44,6 +47,11 @@ export function ImageStudio() {
     // Wan2GP video models (type='video') are hidden from ImageStudio.
     const LOCAL_IMAGE_MODELS = LOCAL_MODEL_CATALOG.filter(m => m.type !== 'video');
     let useLocalModel = false;
+    // Higgsfield API source. Mutually exclusive with useLocalModel; the toggle
+    // cycles API → Local → Higgsfield so each path keeps its own model list.
+    let useHiggsfield = false;
+    const hfModels = HIGGSFIELD_IMAGE_MODELS;
+    let selectedHfModel = (hfModels.find((m) => m.featured) || hfModels[0] || {}).id || '';
     let selectedLocalModel = LOCAL_IMAGE_MODELS[0]?.id || null;
     let localGenProgress = 0; // 0–1
 
@@ -116,8 +124,10 @@ export function ImageStudio() {
     // --- Image Upload Picker (Image-to-Image) ---
     const picker = createUploadPicker({
         anchorContainer: container,
-        uploadFn: (file) => useLocalModel ? URL.createObjectURL(file) : muapi.uploadFile(file),
-        requireApiKey: () => !useLocalModel,
+        uploadFn: (file) => useLocalModel ? URL.createObjectURL(file)
+            : useHiggsfield ? higgsfield.uploadImage(file)
+            : muapi.uploadFile(file),
+        requireApiKey: () => !useLocalModel && !useHiggsfield,
         onSelect: ({ url, urls }) => {
             uploadedImageUrls = urls || [url];
             if (!imageMode) {
@@ -202,32 +212,45 @@ export function ImageStudio() {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="opacity-60 text-secondary"><path d="M6 2L3 6v15a2 2 0 002 2h14a2 2 0 002-2V6l-3-4H6z"/></svg>
     `, '720p', 'quality-btn', t('image.qualityTooltip'));
 
-    // Local / API source toggle (only shown in Electron)
+    // Source toggle (Electron only): Muapi API → local engine → Higgsfield API
     let localToggleBtn = null;
     if (isLocalAIAvailable()) {
+        const SOURCES = ['api', 'local', ...(isHiggsfieldAvailable() ? ['hf'] : [])];
+        let sourceIndex = 0;
         localToggleBtn = document.createElement('button');
         localToggleBtn.id = 'local-toggle-btn';
         localToggleBtn.className = 'flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all border text-xs font-bold whitespace-nowrap';
+        const base = 'flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all border text-xs font-bold whitespace-nowrap ';
         const updateLocalToggleStyle = () => {
-            if (useLocalModel) {
-                localToggleBtn.className = 'flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all border text-xs font-bold whitespace-nowrap bg-primary/20 border-primary/40 text-primary';
+            const source = SOURCES[sourceIndex];
+            useLocalModel = source === 'local';
+            useHiggsfield = source === 'hf';
+            if (source === 'local') {
+                localToggleBtn.className = base + 'bg-primary/20 border-primary/40 text-primary';
                 localToggleBtn.textContent = t('image.local');
+            } else if (source === 'hf') {
+                localToggleBtn.className = base + 'bg-fuchsia-500/20 border-fuchsia-400/40 text-fuchsia-300';
+                localToggleBtn.textContent = t('hf.source');
             } else {
-                localToggleBtn.className = 'flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all border text-xs font-bold whitespace-nowrap bg-white/5 border-white/5 text-white/60 hover:bg-white/10';
+                localToggleBtn.className = base + 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10';
                 localToggleBtn.textContent = t('image.api');
             }
         };
         updateLocalToggleStyle();
         localToggleBtn.onclick = (e) => {
             e.stopPropagation();
-            useLocalModel = !useLocalModel;
+            sourceIndex = (sourceIndex + 1) % SOURCES.length;
             updateLocalToggleStyle();
             // Reflect active model in the button label
+            const label = document.getElementById('model-btn-label');
             if (useLocalModel) {
                 const lm = getLocalModelById(selectedLocalModel);
-                if (lm) document.getElementById('model-btn-label').textContent = lm.name;
-            } else {
-                document.getElementById('model-btn-label').textContent = selectedModelName;
+                if (lm && label) label.textContent = lm.name;
+            } else if (useHiggsfield) {
+                const hm = hfModels.find((m) => m.id === selectedHfModel);
+                if (label) label.textContent = hm ? hm.name : 'Higgsfield';
+            } else if (label) {
+                label.textContent = selectedModelName;
             }
         };
         controlsLeft.appendChild(localToggleBtn);
@@ -737,6 +760,44 @@ export function ImageStudio() {
             const renderModels = (filter = '') => {
                 list.innerHTML = '';
 
+                if (useHiggsfield) {
+                    // ── Higgsfield API model list ─────────────────────────
+                    const filtered = hfModels.filter(m =>
+                        m.name.toLowerCase().includes(filter.toLowerCase()) ||
+                        m.id.toLowerCase().includes(filter.toLowerCase())
+                    );
+                    if (filtered.length === 0) {
+                        list.innerHTML = `<div class="text-xs text-muted text-center py-4">${t('common.noResults')}</div>`;
+                        return;
+                    }
+                    filtered.forEach(m => {
+                        const item = document.createElement('div');
+                        item.className = `flex items-center justify-between p-3.5 hover:bg-white/5 rounded-2xl cursor-pointer transition-all border border-transparent hover:border-white/5 ${selectedHfModel === m.id ? 'bg-white/5 border-white/5' : ''}`;
+                        item.innerHTML = `
+                            <div class="flex items-center gap-3.5">
+                                <div class="w-10 h-10 bg-fuchsia-500/10 text-fuchsia-300 border border-white/5 rounded-xl flex items-center justify-center font-black text-sm shadow-inner uppercase">HF</div>
+                                <div class="flex flex-col gap-0.5">
+                                    <span class="text-xs font-bold text-white tracking-tight">${m.name}</span>
+                                    <span class="text-[10px] text-muted">${m.description || 'Higgsfield API'}</span>
+                                </div>
+                            </div>
+                            ${selectedHfModel === m.id ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="4"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+                        `;
+                        item.onclick = (e) => {
+                            e.stopPropagation();
+                            selectedHfModel = m.id;
+                            document.getElementById('model-btn-label').textContent = m.name;
+                            if (m.aspectRatios?.length) {
+                                selectedAr = m.aspectRatios[0];
+                                document.getElementById('ar-btn-label').textContent = selectedAr;
+                            }
+                            closeDropdown();
+                        };
+                        list.appendChild(item);
+                    });
+                    return;
+                }
+
                 if (useLocalModel) {
                     // ── Local model list (Wan2GP image-capable models only) ───
                     const filtered = LOCAL_IMAGE_MODELS.filter(m =>
@@ -1151,6 +1212,72 @@ export function ImageStudio() {
                 alert('Please enter a prompt to generate an image.');
                 return;
             }
+        }
+
+        // ── Higgsfield API path ───────────────────────────────────────────────
+        if (useHiggsfield) {
+            const hm = hfModels.find((m) => m.id === selectedHfModel);
+            if (!hm) { alert(t('hf.noModel')); return; }
+            if (!(await higgsfield.isConfigured())) {
+                document.body.appendChild(SettingsModal(null, 'higgsfield'));
+                return;
+            }
+
+            hero.classList.add('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = `<span class="animate-spin inline-block mr-2 text-black">◌</span> ${t('common.generating')}`;
+
+            const progressWrap = document.getElementById('local-progress-wrap');
+            const progressFill = document.getElementById('local-progress-fill');
+            const progressPct = document.getElementById('local-progress-pct');
+            progressWrap?.classList.remove('hidden');
+            progressWrap?.classList.add('flex');
+
+            const unsub = higgsfield.onProgress(({ progress, message }) => {
+                const pct = Math.round((progress ?? 0) * 100);
+                const label = message || `${pct}%`;
+                if (progressFill) progressFill.style.width = `${pct}%`;
+                if (progressPct) progressPct.textContent = label;
+                generateBtn.innerHTML = `<span class="animate-spin inline-block mr-2 text-black">◌</span> ${label}`;
+            });
+
+            let hadError = false;
+            try {
+                const res = await higgsfield.generate({
+                    model: hm.id,
+                    prompt,
+                    aspect_ratio: selectedAr,
+                    quality: document.getElementById('quality-btn-label')?.textContent,
+                    seed,
+                    image_url: uploadedImageUrls[0],
+                });
+                unsub();
+                progressWrap?.classList.replace('flex', 'hidden');
+                progressWrap?.classList.add('hidden');
+
+                if (res?.mediaType === 'video') throw new Error('This model returns video — use the Video studio.');
+                addToHistory({
+                    id: res.requestId || Date.now().toString(),
+                    url: res.url,
+                    prompt,
+                    model: `higgsfield:${hm.id}`,
+                    aspect_ratio: selectedAr,
+                    timestamp: new Date().toISOString(),
+                });
+                showImageInCanvas(res.url);
+            } catch (e) {
+                hadError = true;
+                unsub();
+                progressWrap?.classList.add('hidden');
+                console.error('[Higgsfield] generation error:', e);
+                hero.classList.remove('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
+                generateBtn.innerHTML = `Error: ${String(e.message).slice(0, 120)}`;
+                setTimeout(() => { generateBtn.innerHTML = t('common.generate'); }, 6000);
+            } finally {
+                generateBtn.disabled = false;
+                if (!hadError) generateBtn.innerHTML = t('common.generate');
+            }
+            return;
         }
 
         // ── Local inference path ──────────────────────────────────────────────
