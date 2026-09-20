@@ -3,6 +3,7 @@ const path = require('path');
 const { register: registerLocalInference } = require('./lib/localInference');
 const { register: registerWan2gp } = require('./lib/wan2gpProvider');
 const { register: registerHiggsfield } = require('./lib/higgsfieldProvider');
+const { register: registerOpenrouterKey } = require('./lib/openrouterKey');
 
 process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
@@ -75,6 +76,7 @@ app.whenReady().then(() => {
         registerLocalInference();
         registerWan2gp();
         registerHiggsfield();
+        registerOpenrouterKey();
     } catch (err) {
         console.error('Failed to register local-ai/wan2gp/higgsfield handlers:', err);
         dialog.showErrorBox(

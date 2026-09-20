@@ -51,12 +51,31 @@ test('the daily budget falls back to a safe default when misconfigured', () => {
 
 // ── Pricing and key handling ──────────────────────────────────────────────
 
-test('prices are reported as a range, because image_output is per token', () => {
-    const p = or.priceRange('0.00003');
-    assert.equal(p.per_token_usd, 0.00003);
-    assert.ok(p.approx_usd_low > 0.03 && p.approx_usd_high < 0.04);
+test('prices are reported as a range wide enough to cover both model families', () => {
+    // Measured 2026-09-20: Nano Banana spent 827 tokens on a prompt where
+    // GPT-5 Image Mini spent 6251. A range tuned to one family understates the
+    // other by about 7x, so the band has to span both.
+    const nano = or.priceRange('0.00003');
+    assert.equal(nano.per_token_usd, 0.00003);
+    assert.ok(nano.approx_usd_low <= 0.0248, 'the measured Nano Banana cost must fall inside the range');
+    assert.ok(nano.approx_usd_high >= 0.0248);
+
+    const mini = or.priceRange('0.000008');
+    assert.ok(mini.approx_usd_low <= 0.05001, 'the measured GPT-5 Image Mini cost must fall inside the range');
+    assert.ok(mini.approx_usd_high >= 0.05001);
+
     assert.equal(or.priceRange('0'), null);
     assert.equal(or.priceRange(undefined), null);
+});
+
+test('the app model snapshot stays ordered by price and keeps its measured figures', () => {
+    const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'src', 'lib', 'openrouterModels.js'), 'utf8');
+    const prices = [...src.matchAll(/approxUsd:\s*([\d.]+)/g)].map((m) => Number(m[1]));
+    assert.ok(prices.length >= 5);
+    assert.deepEqual(prices, [...prices].sort((a, b) => a - b), 'the picker must list cheapest first');
+    // The two we actually paid for, so a future edit cannot quietly revert them.
+    assert.match(src, /id: 'google\/gemini-2\.5-flash-image',[\s\S]{0,120}approxUsd: 0\.025,[\s\S]{0,40}measured: true/);
+    assert.match(src, /id: 'openai\/gpt-5-image-mini',[\s\S]{0,120}approxUsd: 0\.05,[\s\S]{0,40}measured: true/);
 });
 
 test('a missing key produces an actionable error', () => {

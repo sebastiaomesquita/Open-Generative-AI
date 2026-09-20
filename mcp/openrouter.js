@@ -88,11 +88,14 @@ function keyStatus(env = process.env, deps) {
 // ── Models ────────────────────────────────────────────────────────────────
 
 /**
- * `image_output` is priced per output token, not per image, and an image costs
- * roughly 1100-1300 tokens depending on size. So we surface a range rather
- * than pretend a flat price; the real figure comes back with every call.
+ * `image_output` is priced per output token, not per image, and the tokens an
+ * image costs vary by family far more than by size. Measured on 2026-09-20:
+ * Nano Banana spent 827 tokens, GPT-5 Image Mini spent 6251 for the same
+ * prompt. A single range across all models would therefore be misleading by
+ * about 7x, so we widen it honestly and lean on the real figure that comes
+ * back with every generation.
  */
-const TOKENS_PER_IMAGE = { low: 1100, high: 1300 };
+const TOKENS_PER_IMAGE = { low: 800, high: 6300 };
 
 function priceRange(imageOutputPerToken) {
     const p = Number(imageOutputPerToken);
@@ -125,7 +128,7 @@ async function listImageModels(env = process.env) {
         count: models.length,
         key: keyStatus(env),
         budget: ledger.summary(env),
-        note: 'Prices are per output token; an image runs about 1100-1300 tokens. Every generation returns its real cost.',
+        note: 'Prices are per output token, and tokens per image vary by family: measured 827 for Nano Banana against 6251 for GPT-5 Image Mini. The range below is wide for that reason; every generation returns its real cost.',
         models,
     };
 }

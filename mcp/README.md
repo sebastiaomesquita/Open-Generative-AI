@@ -7,7 +7,7 @@ Three engines behind one server:
 
 | | `local_generate` | `openrouter_generate_image` | `higgsfield_generate` |
 |---|---|---|---|
-| Cost | **free** | ~US$ 0.01 to 0.15 per image | per job, usually more |
+| Cost | **free** | US$ 0.025 to 0.25 per image | per job, usually more |
 | Runs on | this Mac's GPU | OpenRouter | Higgsfield |
 | Network | none, works offline | required | required |
 | Media | images only | images only | **images and video** |
@@ -78,13 +78,22 @@ node mcp/server.js --save-openrouter-key sk-or-v1-...
 Keys come from <https://openrouter.ai/keys> and go into the macOS keychain, not
 into a config file.
 
-`openrouter_list_image_models` lists what is available, cheapest first. As of
-today that spans about US$ 0.01 per image for GPT-5 Image Mini up to US$ 0.15
-for Nano Banana Pro, with Nano Banana around US$ 0.04 as the default.
+`openrouter_list_image_models` lists what is available, cheapest first.
 
-Prices are quoted per output token, not per image, and an image runs about
-1100 to 1300 tokens depending on size. So the list shows a range, and every
-generation returns the real figure OpenRouter charged.
+Prices are quoted per output token, not per image, and the tokens an image
+costs vary by family far more than by size. Measured here on 2026-09-20, same
+prompt:
+
+| Model | Tokens | Cost |
+|---|---|---|
+| Nano Banana (`google/gemini-2.5-flash-image`) | 827 | **US$ 0.025** |
+| GPT-5 Image Mini (`openai/gpt-5-image-mini`) | 6251 | **US$ 0.050** |
+
+So the OpenAI models cost far more than their per-token price suggests: Mini
+looks four times cheaper per token and is twice as expensive per image. Nano
+Banana is both the cheapest and the default. Anything not measured above is
+derived from its own family's token count, so treat it as close but not exact;
+every generation returns the real figure.
 
 ### Daily budget
 

@@ -1,38 +1,49 @@
 // Curated snapshot of the OpenRouter image models, so the studio can build its
-// picker synchronously at mount. Prices are approximate: OpenRouter bills per
-// output token (~1100-1300 per image), and the real figure only exists after a
-// generation. Refresh with: node scripts/refresh-openrouter-models.js
+// picker synchronously at mount.
+//
+// Prices are per IMAGE, not per token, because that is what a person needs to
+// decide. OpenRouter itself bills per output token, and the token count per
+// image differs sharply by family: measured on 2026-09-20, Nano Banana spent
+// 827 tokens per image while GPT-5 Image Mini spent 6251. So the OpenAI models
+// cost far more than their per-token price suggests.
+//
+// `measured: true` means the figure came from a real generation on this
+// machine. The others are derived from the measured token count of their own
+// family, so treat them as close but not exact. The true cost of any single
+// generation is shown on the button once it finishes.
 export const OPENROUTER_IMAGE_MODELS = [
-    {
-        id: 'openai/gpt-5-image-mini',
-        name: 'GPT-5 Image Mini',
-        approxUsd: 0.01,
-        description: 'O mais barato. Bom para rascunho com qualidade acima do local.',
-    },
     {
         id: 'google/gemini-2.5-flash-image',
         name: 'Nano Banana',
-        approxUsd: 0.04,
-        description: 'Melhor equilíbrio entre custo e qualidade. Padrão.',
+        approxUsd: 0.025,
+        measured: true,
+        description: 'O mais barato e o melhor custo-benefício. Padrão.',
         featured: true,
     },
     {
-        id: 'openai/gpt-5-image',
-        name: 'GPT-5 Image',
+        id: 'openai/gpt-5-image-mini',
+        name: 'GPT-5 Image Mini',
         approxUsd: 0.05,
-        description: 'Forte em texto dentro da imagem e em seguir instruções.',
+        measured: true,
+        description: 'Bom em texto dentro da imagem. Gasta ~7x mais tokens que o Gemini.',
     },
     {
         id: 'google/gemini-3.1-flash-image',
         name: 'Nano Banana 2',
-        approxUsd: 0.07,
+        approxUsd: 0.05,
         description: 'Geração mais recente do Flash Image.',
     },
     {
         id: 'google/gemini-3-pro-image',
         name: 'Nano Banana Pro',
-        approxUsd: 0.15,
-        description: 'O mais caro e o mais detalhado da lista.',
+        approxUsd: 0.10,
+        description: 'O mais detalhado da família Gemini.',
+    },
+    {
+        id: 'openai/gpt-5-image',
+        name: 'GPT-5 Image',
+        approxUsd: 0.25,
+        description: 'O mais caro da lista. Só quando o texto na imagem for crítico.',
     },
 ];
 

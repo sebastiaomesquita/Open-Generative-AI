@@ -39,6 +39,13 @@ contextBridge.exposeInMainWorld('localAI', {
         cancelGeneration: () => ipcRenderer.invoke('higgsfield:cancel-generation'),
     },
 
+    // OpenRouter key, read from the macOS keychain by the main process so the
+    // user does not have to paste it into the app as well.
+    openrouterKey: {
+        get: () => ipcRenderer.invoke('openrouter:get-key'),
+        has: () => ipcRenderer.invoke('openrouter:has-key'),
+    },
+
     // Progress events — both engines emit on local-ai:progress
     onProgress: (callback) => {
         const listener = (_, data) => callback(data);

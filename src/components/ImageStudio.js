@@ -799,7 +799,7 @@ export function ImageStudio() {
                                 <div class="flex flex-col gap-0.5">
                                     <div class="flex items-center gap-1.5">
                                         <span class="text-xs font-bold text-white tracking-tight">${m.name}</span>
-                                        <span class="text-[9px] font-black px-1 py-0.5 rounded bg-violet-500/20 text-violet-300">~US$ ${m.approxUsd.toFixed(2)}</span>
+                                        <span class="text-[9px] font-black px-1 py-0.5 rounded bg-violet-500/20 text-violet-300">${m.measured ? '' : '~'}US$ ${m.approxUsd.toFixed(3)}</span>
                                     </div>
                                     <span class="text-[10px] text-muted">${m.description}</span>
                                 </div>
@@ -1275,7 +1275,7 @@ export function ImageStudio() {
         if (useOpenrouter) {
             const om = orModels.find((m) => m.id === selectedOrModel);
             if (!om) { alert(t('or.noModel')); return; }
-            if (!isOpenrouterConfigured()) {
+            if (!(await isOpenrouterConfigured())) {
                 document.body.appendChild(SettingsModal(null, 'llm'));
                 return;
             }

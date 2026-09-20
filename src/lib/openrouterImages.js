@@ -12,11 +12,27 @@ import { getOpenrouterModelById } from './openrouterModels.js';
 
 const IMAGES_URL = 'https://openrouter.ai/api/v1/images';
 
-export function getOpenrouterKey() {
-    return getLlmSettings().apiKey || '';
+/**
+ * The key can come from two places, in this order:
+ *   1. the Prompt LLM field in Settings (localStorage), which is what a user
+ *      who only ever opens the app will have filled in;
+ *   2. the macOS keychain, where `mcp/server.js --save-openrouter-key` puts it.
+ * The second means someone who set the key up for Claude Code gets the app
+ * working for free, and the secret stays out of localStorage.
+ */
+export async function getOpenrouterKey() {
+    const fromSettings = getLlmSettings().apiKey || '';
+    if (fromSettings) return fromSettings;
+    try {
+        return (await window.localAI?.openrouterKey?.get()) || '';
+    } catch {
+        return '';
+    }
 }
 
-export const isOpenrouterConfigured = () => Boolean(getOpenrouterKey());
+export async function isOpenrouterConfigured() {
+    return Boolean(await getOpenrouterKey());
+}
 
 function describeHttpError(status, detail) {
     const hints = {
@@ -34,7 +50,7 @@ export async function generateImage({ model, prompt, referenceUrls = [], signal 
     const clean = String(prompt || '').trim();
     if (!clean) throw new Error('Escreva um prompt antes de gerar.');
 
-    const key = getOpenrouterKey();
+    const key = await getOpenrouterKey();
     if (!key) throw new Error('Nenhuma chave OpenRouter salva. Configure em Settings → Prompt LLM.');
 
     const body = { model: model || 'google/gemini-2.5-flash-image', prompt: clean };
