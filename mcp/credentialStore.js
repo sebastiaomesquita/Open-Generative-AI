@@ -52,12 +52,17 @@ function deleteFromKeychain() {
     }
 }
 
-/** Returns { apiKey, apiSecret, origin } or throws with a fix-it message. */
-function resolveCredentials(env = process.env) {
+/**
+ * Returns { apiKey, apiSecret, origin } or throws with a fix-it message.
+ *
+ * `keychain` is injectable so tests stay hermetic: without it they would pass
+ * or fail depending on whether this machine happens to have a credential.
+ */
+function resolveCredentials(env = process.env, { keychain = fromKeychain } = {}) {
     const fromEnv = String(env.HF_CREDENTIALS || '').trim();
     if (fromEnv) return { ...parseCredentials(fromEnv), origin: 'env' };
 
-    const stored = fromKeychain();
+    const stored = keychain();
     if (stored) return { ...parseCredentials(stored), origin: 'keychain' };
 
     throw new Error(
@@ -68,9 +73,9 @@ function resolveCredentials(env = process.env) {
     );
 }
 
-function credentialStatus(env = process.env) {
+function credentialStatus(env = process.env, deps) {
     try {
-        const { apiKey, origin } = resolveCredentials(env);
+        const { apiKey, origin } = resolveCredentials(env, deps);
         return { configured: true, keyId: apiKey, origin };
     } catch {
         return { configured: false, keyId: '', origin: 'none' };

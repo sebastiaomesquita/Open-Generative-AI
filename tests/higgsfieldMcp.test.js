@@ -191,20 +191,16 @@ test('a failed job reports that nothing was charged', async () => {
     });
 });
 
-test('a missing credential produces an actionable error, not a stack trace', async () => {
-    const prev = process.env.HF_CREDENTIALS;
-    delete process.env.HF_CREDENTIALS;
-    delete require.cache[require.resolve('../mcp/server')];
-    const { dispatch } = require('../mcp/server');
-    try {
-        await assert.rejects(
-            dispatch('higgsfield_estimate', { model: 'hf-soul-v2', prompt: 'x' }, () => {}),
-            /--save-credential|HF_CREDENTIALS/,
-        );
-    } finally {
-        if (prev !== undefined) process.env.HF_CREDENTIALS = prev;
-        delete require.cache[require.resolve('../mcp/server')];
-    }
+test('a missing credential produces an actionable error, not a stack trace', () => {
+    // Stubbed keychain, so the result does not depend on what this machine has
+    // stored. Testing the resolver directly keeps it that way.
+    const { resolveCredentials, credentialStatus } = require('../mcp/credentialStore');
+    const noKeychain = { keychain: () => null };
+    assert.throws(() => resolveCredentials({}, noKeychain), /--save-credential|HF_CREDENTIALS/);
+    assert.deepEqual(credentialStatus({}, noKeychain), { configured: false, keyId: '', origin: 'none' });
+    assert.equal(resolveCredentials({}, { keychain: () => 'kid:sec' }).origin, 'keychain');
+    assert.equal(resolveCredentials({ HF_CREDENTIALS: 'a:b' }, { keychain: () => 'kid:sec' }).origin, 'env',
+        'the environment wins over the keychain');
 });
 
 // ── Local engine ──────────────────────────────────────────────────────────

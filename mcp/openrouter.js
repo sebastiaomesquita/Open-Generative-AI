@@ -60,10 +60,14 @@ function deleteKey() {
     }
 }
 
-function resolveKey(env = process.env) {
+/**
+ * `keychain` is injectable so tests stay hermetic: without it they would pass
+ * or fail depending on whether this machine happens to have a key stored.
+ */
+function resolveKey(env = process.env, { keychain = fromKeychain } = {}) {
     const fromEnv = String(env.OPENROUTER_API_KEY || '').trim();
     if (fromEnv) return { key: fromEnv, origin: 'env' };
-    const stored = fromKeychain();
+    const stored = keychain();
     if (stored) return { key: stored, origin: 'keychain' };
     throw new Error(
         'No OpenRouter key found. Store one with:\n'
@@ -72,9 +76,9 @@ function resolveKey(env = process.env) {
     );
 }
 
-function keyStatus(env = process.env) {
+function keyStatus(env = process.env, deps) {
     try {
-        const { key, origin } = resolveKey(env);
+        const { key, origin } = resolveKey(env, deps);
         return { configured: true, origin, prefix: `${key.slice(0, 12)}...` };
     } catch {
         return { configured: false, origin: 'none', prefix: '' };

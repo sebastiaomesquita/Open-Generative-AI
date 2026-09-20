@@ -60,10 +60,17 @@ test('prices are reported as a range, because image_output is per token', () => 
 });
 
 test('a missing key produces an actionable error', () => {
-    assert.throws(() => or.resolveKey({ OPENROUTER_API_KEY: '' }), /--save-openrouter-key|OPENROUTER_API_KEY/);
+    // The keychain reader is stubbed: otherwise this test would pass or fail
+    // depending on whether the machine running it happens to have a key stored.
+    const noKeychain = { keychain: () => null };
+    assert.throws(() => or.resolveKey({ OPENROUTER_API_KEY: '' }, noKeychain), /--save-openrouter-key|OPENROUTER_API_KEY/);
+    assert.deepEqual(or.keyStatus({}, noKeychain), { configured: false, origin: 'none', prefix: '' });
+
     assert.deepEqual(or.keyStatus({ OPENROUTER_API_KEY: 'sk-or-v1-abcdefghijk' }), {
         configured: true, origin: 'env', prefix: 'sk-or-v1-abc...',
     });
+    // A stored key is used when the environment is silent.
+    assert.equal(or.resolveKey({}, { keychain: () => 'sk-or-v1-stored' }).origin, 'keychain');
 });
 
 test('an obviously wrong key is rejected before it reaches the keychain', () => {
