@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 // Higgsfield MCP server (stdio) — for Claude Code on this Mac.
 //
+// Two engines behind one server:
+//   - local: stable-diffusion.cpp on this Mac's GPU. Free, offline, images only.
+//   - cloud: the Higgsfield API. Costs money, does video, much higher quality.
+// Prefer local unless the user asks for video or for a cloud-only model.
+//
 // Why this exists next to the official remote MCP at mcp.higgsfield.ai:
 //   - it bills the pay-per-use API balance, not the higgsfield.ai plan credits
 //   - it writes the result to disk, where the agent is already working
@@ -18,6 +23,7 @@ const fs = require('node:fs');
 const { toPublic, getModelById, buildInput } = require('../electron/lib/higgsfieldCatalog');
 const { resolveCredentials, credentialStatus, saveToKeychain, deleteFromKeychain } = require('./credentialStore');
 const api = require('./api');
+const local = require('./local');
 const guard = require('./spendGuard');
 
 const VERSION = '0.1.0';
@@ -155,6 +161,30 @@ async function generateTool(args, log) {
 
 const TOOLS = [
     {
+        name: 'local_status',
+        description: 'Show which local image models are downloaded and ready to run on this Mac, and which are missing. Local generation is FREE, offline, and needs no account. Call this before local_generate.',
+        inputSchema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'local_generate',
+        description: 'Generate an image on this Mac with stable-diffusion.cpp, using the GPU. FREE: no account, no network, no spending. Images only, no video. Slower and lower quality than the cloud models, so it suits drafts, iteration and anything private. Saves the file to disk and returns its path.',
+        inputSchema: {
+            type: 'object',
+            required: ['model', 'prompt'],
+            properties: {
+                model: { type: 'string', description: 'Local model id from local_status, e.g. dreamshaper-8 or z-image-turbo.' },
+                prompt: { type: 'string', description: 'What to draw. English works best with these models.' },
+                negative_prompt: { type: 'string', description: 'What to avoid. Local models support this; the cloud ones do not.' },
+                aspect_ratio: { type: 'string', enum: ['1:1', '4:3', '3:4', '16:9', '9:16'], description: 'Default 1:1.' },
+                steps: { type: 'number', description: 'More steps, more detail and more time. The model default is usually right.' },
+                cfg_scale: { type: 'number', description: 'How strictly to follow the prompt. Around 7.5 for SD 1.5, 1.0 for Z-Image Turbo.' },
+                seed: { type: 'number', description: 'Reuse a seed to reproduce an image exactly.' },
+                output_dir: { type: 'string', description: 'Where to save. Defaults to HF_OUTPUT_DIR or ~/Downloads/higgsfield.' },
+                timeout_minutes: { type: 'number', description: 'Default 15.' },
+            },
+        },
+    },
+    {
         name: 'higgsfield_list_models',
         description: 'List the Higgsfield image and video models this server can run, with their allowed aspect ratios, durations and whether they need a reference image. Also reports whether a credential is configured and the current spend ceiling. Call this before generating.',
         inputSchema: {
@@ -214,6 +244,8 @@ const TOOLS = [
 
 async function dispatch(name, args, log) {
     switch (name) {
+        case 'local_status': return local.status();
+        case 'local_generate': return local.generate(args || {}, log);
         case 'higgsfield_list_models': return listModels(args || {});
         case 'higgsfield_estimate': return estimateTool(args || {});
         case 'higgsfield_generate': return generateTool(args || {}, log);
@@ -244,7 +276,8 @@ async function main() {
     });
 
     await server.connect(new StdioServerTransport());
-    log(`ready (v${VERSION}); credential: ${credentialStatus().origin}; ceiling: US$ ${guard.ceiling()}`);
+    const l = local.status();
+    log(`ready (v${VERSION}); local: ${l.engine_ready ? `${l.ready_models.length} model(s)` : 'engine missing'}; cloud credential: ${credentialStatus().origin}; ceiling: US$ ${guard.ceiling()}`);
 }
 
 // ── CLI helpers (not part of the MCP protocol) ────────────────────────────
@@ -260,10 +293,18 @@ if (require.main === module) {
         console.log(deleteFromKeychain().ok ? 'Credential removed from the keychain.' : 'No credential found.');
         process.exit(0);
     } else if (flag === '--status') {
-        console.log(JSON.stringify({ version: VERSION, ...credentialStatus(), ceiling_usd: guard.ceiling(), output_dir: defaultOutputDir() }, null, 2));
+        const l = local.status();
+        console.log(JSON.stringify({
+            version: VERSION,
+            local_engine_ready: l.engine_ready,
+            local_models_ready: l.ready_models,
+            cloud_credential: credentialStatus(),
+            ceiling_usd: guard.ceiling(),
+            output_dir: defaultOutputDir(),
+        }, null, 2));
         process.exit(0);
     } else if (flag === '--self-test') {
-        console.log(JSON.stringify(listModels({}), null, 2));
+        console.log(JSON.stringify({ local: local.status(), cloud: listModels({}) }, null, 2));
         process.exit(0);
     } else {
         main().catch((err) => { process.stderr.write(`[higgsfield] fatal: ${err.stack}\n`); process.exit(1); });

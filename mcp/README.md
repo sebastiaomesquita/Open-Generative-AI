@@ -1,7 +1,21 @@
-# Higgsfield MCP server (local, stdio)
+# Generation MCP server (local, stdio)
 
-Lets Claude Code generate Higgsfield images and videos from the terminal, on
-this Mac, saving the result straight into the project you are working in.
+Lets Claude Code generate images and videos from the terminal, on this Mac,
+saving the result straight into the project you are working in.
+
+Two engines behind one server:
+
+| | `local_generate` | `higgsfield_generate` |
+|---|---|---|
+| Cost | **free** | pay-per-use USD balance |
+| Runs on | this Mac's GPU, via stable-diffusion.cpp | Higgsfield's servers |
+| Network | none, works offline | required |
+| Media | images only | images and video |
+| Quality | draft to good | state of the art |
+| Speed on an M1 Pro 16 GB | ~4 min (SD 1.5) to ~7 min (Z-Image) | seconds to minutes |
+
+Start local. Reach for the cloud when you need video, or a level of quality a
+2 GB model on a laptop cannot reach.
 
 ## Why this exists next to the official MCP
 
@@ -19,6 +33,37 @@ four points that only matter locally:
 
 Use whichever fits. They can coexist.
 
+## Local engine (free)
+
+`local_generate` runs stable-diffusion.cpp against weights on disk, using the
+Mac's GPU through Metal. No account, no key, no balance, no network. The
+result returns `cost_usd: 0` and a `metal` flag saying whether the GPU was
+actually used.
+
+`local_status` lists which models are downloaded and which are missing. The
+weights and the engine are the ones the desktop app installed, so there is one
+copy on disk; download new ones in the app under Settings > Local Models.
+
+What local cannot do: video. stable-diffusion.cpp is image-only, and the app's
+video engine needs CUDA, which no Mac has.
+
+Local-only extras that the cloud models do not accept: `negative_prompt`, an
+explicit `steps` count and `cfg_scale`.
+
+Measured on an M1 Pro with 16 GB, same prompt and seed, Metal confirmed:
+
+| Model | Output | Time |
+|---|---|---|
+| Dreamshaper 8 (SD 1.5) | 640x512 | 228 s |
+| Z-Image Turbo | 1344x1024 | 400 s |
+
+Z-Image Turbo is worth the extra wait: far more photoreal, and only 8 sampling
+steps. It renders at a 1024 base, which is where the time goes. Dreamshaper is
+the one to iterate with.
+
+Output filenames carry the model id and the seed, so running one prompt on two
+models leaves you both files to compare instead of one overwriting the other.
+
 ## Transport, and what that rules out
 
 This is a **stdio** server: Claude Code starts it as a child process. Claude
@@ -27,6 +72,11 @@ Anthropic's cloud, not from your machine, so it can never reach a process on
 this Mac. Serving those needs the same code behind a public HTTPS endpoint.
 
 ## Setup
+
+The local engine needs no setup beyond having the desktop app install the
+engine and at least one model. Check with `node mcp/server.js --status`.
+
+For the cloud engine only:
 
 1. Create an API credential at <https://console.higgsfield.ai> (format
    `KEY_ID:KEY_SECRET`, the secret is shown once) and top the balance up.
@@ -46,6 +96,8 @@ Check it any time with `node mcp/server.js --status`.
 
 ## Tools
 
+- **`local_status`** — which local models are ready. Free.
+- **`local_generate`** — generate on this Mac. **Free.**
 - **`higgsfield_list_models`** — the catalogue, with allowed aspect ratios,
   durations and which models need a reference image. Free.
 - **`higgsfield_estimate`** — what a generation would cost, in USD and credits,
@@ -72,6 +124,7 @@ budget rather than discover the bill afterwards.
 | Variable | Default | Meaning |
 |---|---|---|
 | `HF_CREDENTIALS` | keychain | `KEY_ID:KEY_SECRET`, overrides the keychain |
+| `HF_LOCAL_AI_DIR` | the desktop app's folder | where the local engine and weights live |
 | `HF_MAX_USD` | `0.50` | spend ceiling per generation |
 | `HF_OUTPUT_DIR` | `~/Downloads/higgsfield` | where results are saved |
 | `HF_BASE_URL` | `https://api.higgsfield.ai` | API host, for testing |

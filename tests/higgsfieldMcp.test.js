@@ -51,16 +51,20 @@ test('credential status reads the environment without touching the keychain', ()
 
 test('every declared tool has a usable schema and a dispatch branch', async () => {
     const { TOOLS, dispatch } = require('../mcp/server');
-    assert.ok(TOOLS.length >= 4);
+    assert.ok(TOOLS.length >= 6);
     for (const tool of TOOLS) {
-        assert.match(tool.name, /^higgsfield_/);
+        assert.match(tool.name, /^(higgsfield|local)_/);
         assert.ok(tool.description.length > 40, `${tool.name} needs a real description`);
         assert.equal(tool.inputSchema.type, 'object');
         for (const req of tool.inputSchema.required || []) {
             assert.ok(tool.inputSchema.properties[req], `${tool.name} requires ${req} but does not declare it`);
         }
     }
+    // The descriptions must make the cost difference obvious: the agent picks
+    // between the two engines from these alone.
     assert.match(TOOLS.find((t) => t.name === 'higgsfield_generate').description, /SPENDS REAL MONEY/);
+    assert.match(TOOLS.find((t) => t.name === 'local_generate').description, /FREE/);
+    assert.match(TOOLS.find((t) => t.name === 'local_generate').description, /no video|Images only/i);
     await assert.rejects(dispatch('higgsfield_nope', {}, () => {}), /Unknown tool/);
 });
 
@@ -195,4 +199,103 @@ test('a missing credential produces an actionable error, not a stack trace', asy
         if (prev !== undefined) process.env.HF_CREDENTIALS = prev;
         delete require.cache[require.resolve('../mcp/server')];
     }
+});
+
+// ── Local engine ──────────────────────────────────────────────────────────
+
+const local = require('../mcp/local');
+
+test('local status lists the catalogue and flags what is missing', () => {
+    const st = local.status({ HF_LOCAL_AI_DIR: path.join(os.tmpdir(), 'no-such-local-ai') });
+    assert.equal(st.engine_ready, false);
+    assert.ok(st.models.length >= 6);
+    assert.deepEqual(st.ready_models, []);
+    const zimg = st.models.find((m) => m.type === 'z-image');
+    assert.ok(zimg.missing_files.length >= 3, 'z-image must report its two auxiliary files too');
+});
+
+test('local generation refuses clearly when the engine or a model is absent', async () => {
+    const env = { HF_LOCAL_AI_DIR: path.join(os.tmpdir(), 'no-such-local-ai') };
+    assert.throws(() => local.resolveModel('dreamshaper-8', env), /engine is not installed/);
+    assert.throws(() => local.resolveModel('nope', env), /Unknown local model.*Available:/s);
+});
+
+test('sd-cli arguments match what the desktop app sends', () => {
+    const sd1 = local.buildArgs({
+        model: { type: 'sd1', defaultSteps: 20, defaultGuidance: 7.5 },
+        modelPath: '/m/ds8.safetensors', modelsDir: '/m', outPath: '/o/x.png',
+        prompt: 'a fox', negativePrompt: 'blurry', aspectRatio: '16:9', seed: 42,
+    });
+    assert.equal(sd1[0], '-m', 'SD 1.5 loads as a full model');
+    assert.ok(sd1.includes('-n') && sd1.includes('blurry'), 'negative prompt is supported locally');
+    assert.equal(sd1[sd1.indexOf('-W') + 1], '896', '16:9 at 512 base, rounded to a multiple of 64');
+    assert.equal(sd1[sd1.indexOf('-H') + 1], '512');
+    assert.equal(sd1[sd1.indexOf('--seed') + 1], '42');
+    assert.equal(sd1.includes('--sd-version'), false);
+
+    const zimg = local.buildArgs({
+        model: { type: 'z-image', defaultSteps: 8, defaultGuidance: 1.0, scheduler: 'discrete' },
+        modelPath: '/m/z.gguf', modelsDir: '/m', outPath: '/o/x.png',
+        prompt: 'a fox', aspectRatio: '1:1', seed: 7,
+    });
+    assert.equal(zimg[0], '--diffusion-model', 'z-image is a standalone transformer, -m would fail');
+    assert.ok(zimg.includes('--llm') && zimg.includes('--vae'), 'z-image needs its encoder and VAE');
+    assert.equal(zimg[zimg.indexOf('-W') + 1], '1024', 'z-image renders at 1024 base');
+
+    const sdxl = local.buildArgs({
+        model: { type: 'sdxl', defaultSteps: 30 }, modelPath: '/m/x.safetensors',
+        modelsDir: '/m', outPath: '/o/x.png', prompt: 'x', aspectRatio: '1:1', seed: 1,
+    });
+    assert.equal(sdxl[sdxl.indexOf('--sd-version') + 1], 'sdxl');
+});
+
+test('aspect ratios always land on multiples of 64', () => {
+    for (const type of ['sd1', 'sdxl', 'z-image']) {
+        for (const ar of ['1:1', '4:3', '3:4', '16:9', '9:16']) {
+            const [w, h] = local.arToDimensions(ar, type);
+            assert.equal(w % 64, 0, `${type} ${ar} width`);
+            assert.equal(h % 64, 0, `${type} ${ar} height`);
+        }
+    }
+    assert.deepEqual(local.arToDimensions('bogus', 'sd1'), [512, 512], 'unknown ratio falls back to square');
+});
+
+test('Metal use is read from the engine log', () => {
+    assert.equal(local.usedMetal('total params memory size = 1969.78MB (VRAM 1969.78MB, RAM 0.00MB)'), true);
+    assert.equal(local.usedMetal('total params memory size = 1969.78MB (VRAM 0.00MB, RAM 1969.78MB)'), false);
+    assert.equal(local.usedMetal('nothing useful here'), null);
+});
+
+test('moving the result survives a cross-device tmp dir', () => {
+    // Regression: the engine writes to the SSD while output usually lands on the
+    // internal disk, and rename() fails with EXDEV across devices.
+    const src = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hf-src-')), 'a.png');
+    const dstDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hf-dst-'));
+    fs.writeFileSync(src, 'png');
+    const dest = path.join(dstDir, 'b.png');
+
+    const move = (from, to) => {
+        try { fs.renameSync(from, to); } catch (e) { if (e.code !== 'EXDEV') throw e; fs.copyFileSync(from, to); fs.unlinkSync(from); }
+    };
+    move(src, dest);
+    assert.equal(fs.readFileSync(dest, 'utf8'), 'png');
+    assert.equal(fs.existsSync(src), false);
+
+    const moveSource = fs.readFileSync(path.join(__dirname, '..', 'mcp', 'local.js'), 'utf8');
+    assert.match(moveSource, /EXDEV/, 'local.js must handle the cross-device case');
+});
+
+test('two models with the same prompt and seed produce two files, not one', () => {
+    // Regression: the filename was prompt+seed only, so running the same prompt
+    // on Dreamshaper and then on Z-Image silently overwrote the first render.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hf-uniq-'));
+    const a = local.uniquePath(dir, 'fisherman-dreamshaper-8-12345', '.png');
+    fs.writeFileSync(a, 'a');
+    const b = local.uniquePath(dir, 'fisherman-z-image-turbo-12345', '.png');
+    assert.notEqual(a, b);
+
+    fs.writeFileSync(b, 'b');
+    const again = local.uniquePath(dir, 'fisherman-dreamshaper-8-12345', '.png');
+    assert.match(again, /-2\.png$/, 'a repeat of the same run is numbered, never overwritten');
+    fs.rmSync(dir, { recursive: true, force: true });
 });
