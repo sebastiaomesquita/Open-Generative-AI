@@ -4,6 +4,7 @@ import { t } from '../lib/i18n.js';
 import { getLlmSettings, saveLlmSettings, enhancePrompt, normalizeBaseUrl, LLM_DEFAULTS } from '../lib/promptLlm.js';
 import { higgsfield, isHiggsfieldAvailable } from '../lib/higgsfieldClient.js';
 import { LLM_MODELS } from '../lib/llmModels.js';
+import { comfy, isComfyAvailable } from '../lib/comfyClient.js';
 
 export function SettingsModal(onClose, initialTab = 'api') {
     const overlay = document.createElement('div');
@@ -27,6 +28,7 @@ export function SettingsModal(onClose, initialTab = 'api') {
     const TABS = [
         { id: 'api', label: t('settings.apiKey') },
         { id: 'llm', label: t('settings.llm') },
+        ...(isComfyAvailable() ? [{ id: 'comfy', label: t('settings.comfy') }] : []),
         ...(isHiggsfieldAvailable() ? [{ id: 'higgsfield', label: t('settings.higgsfield') }] : []),
         ...(isLocalAIAvailable() ? [{ id: 'local', label: t('settings.localModels') }] : []),
     ];
@@ -128,6 +130,43 @@ export function SettingsModal(onClose, initialTab = 'api') {
         llmPanel.querySelector('#llm-model').style.display = e.target.value === '__custom__' ? '' : 'none';
     };
 
+    // ── Tab: ComfyUI (local, free) ────────────────────────────────────────────
+    const comfyPanel = document.createElement('div');
+    comfyPanel.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:0.75rem;">
+            <p id="comfy-state" style="font-size:0.8rem;color:rgba(255,255,255,0.7);margin:0;">${t('common.loading')}</p>
+            <div>
+                <label style="${llmLabel}">${t('settings.comfyDir')}</label>
+                <input id="comfy-dir" type="text" style="${llmInput}" spellcheck="false" placeholder="/Volumes/Hiex4_Dados/ComfyUI">
+            </div>
+            <p id="comfy-models" style="font-size:0.7rem;color:rgba(255,255,255,0.4);margin:0;white-space:pre-wrap;"></p>
+            <p style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin:0;">${t('settings.comfyNote')}</p>
+            <p id="comfy-status" style="font-size:0.75rem;color:rgba(255,255,255,0.6);margin:0;min-height:1.2em;"></p>
+            <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.5rem;">
+                <button id="comfy-stop-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:none;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.45);font-size:0.75rem;font-weight:700;cursor:pointer;">${t('settings.comfyStop')}</button>
+                <button id="comfy-start-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:none;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-size:0.75rem;font-weight:700;cursor:pointer;">${t('settings.comfyStart')}</button>
+                <button id="comfy-save-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:var(--color-primary,#22d3ee);color:#000;font-size:0.75rem;font-weight:700;cursor:pointer;border:none;">${t('common.save')}</button>
+            </div>
+        </div>
+    `;
+    const refreshComfy = async () => {
+        const el = comfyPanel.querySelector('#comfy-state');
+        const models = comfyPanel.querySelector('#comfy-models');
+        const dirInput = comfyPanel.querySelector('#comfy-dir');
+        try {
+            const st = await comfy.status();
+            el.textContent = st.installed
+                ? `${st.running ? t('settings.comfyRunning') : t('settings.comfyStopped')}${st.device ? ` · ${st.device}` : ''}`
+                : t('settings.comfyMissing');
+            if (st.dir && !dirInput.value) dirInput.value = st.dir;
+            const ck = st.models?.checkpoints || [];
+            models.textContent = ck.length ? `${t('settings.comfyModels')}${ck.join(', ')}` : '';
+        } catch (err) {
+            el.textContent = err?.message || String(err);
+        }
+    };
+    if (isComfyAvailable()) refreshComfy();
+
     // ── Tab: Higgsfield API ───────────────────────────────────────────────────
     const hfPanel = document.createElement('div');
     hfPanel.innerHTML = `
@@ -179,6 +218,7 @@ export function SettingsModal(onClose, initialTab = 'api') {
 
         if (id === 'api') body.appendChild(apiPanel);
         if (id === 'llm') body.appendChild(llmPanel);
+        if (id === 'comfy') body.appendChild(comfyPanel);
         if (id === 'higgsfield') body.appendChild(hfPanel);
         if (id === 'local') body.appendChild(localPanel);
     };
@@ -230,6 +270,41 @@ export function SettingsModal(onClose, initialTab = 'api') {
             btn.disabled = false;
         }
     };
+
+    // ── ComfyUI handlers ──────────────────────────────────────────────────────
+    if (isComfyAvailable()) {
+        const cStatus = comfyPanel.querySelector('#comfy-status');
+        comfyPanel.querySelector('#comfy-save-btn').onclick = async () => {
+            const dir = comfyPanel.querySelector('#comfy-dir').value.trim();
+            if (!dir) { close(); return; }
+            try {
+                await comfy.setDir(dir);
+                await refreshComfy();
+                close();
+            } catch (err) {
+                cStatus.textContent = err?.message || String(err);
+            }
+        };
+        comfyPanel.querySelector('#comfy-start-btn').onclick = async () => {
+            const btn = comfyPanel.querySelector('#comfy-start-btn');
+            btn.disabled = true;
+            cStatus.textContent = t('settings.comfyStarting');
+            try {
+                await comfy.start();
+                cStatus.textContent = t('settings.comfyRunning');
+            } catch (err) {
+                cStatus.textContent = err?.message || String(err);
+            } finally {
+                btn.disabled = false;
+                refreshComfy();
+            }
+        };
+        comfyPanel.querySelector('#comfy-stop-btn').onclick = async () => {
+            await comfy.stop();
+            cStatus.textContent = t('settings.comfyStopped');
+            refreshComfy();
+        };
+    }
 
     // ── Higgsfield handlers ───────────────────────────────────────────────────
     if (isHiggsfieldAvailable()) {

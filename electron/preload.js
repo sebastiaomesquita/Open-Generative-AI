@@ -46,6 +46,16 @@ contextBridge.exposeInMainWorld('localAI', {
         has: () => ipcRenderer.invoke('openrouter:has-key'),
     },
 
+    // ComfyUI: local image and video. The app starts and stops the server.
+    comfy: {
+        status:   () => ipcRenderer.invoke('comfy:status'),
+        setDir:   (dir) => ipcRenderer.invoke('comfy:set-dir', dir),
+        start:    () => ipcRenderer.invoke('comfy:start'),
+        stop:     () => ipcRenderer.invoke('comfy:stop'),
+        generate: (params) => ipcRenderer.invoke('comfy:generate', params),
+        cancel:   () => ipcRenderer.invoke('comfy:cancel'),
+    },
+
     // Progress events — both engines emit on local-ai:progress
     onProgress: (callback) => {
         const listener = (_, data) => callback(data);

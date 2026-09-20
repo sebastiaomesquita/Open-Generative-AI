@@ -10,6 +10,24 @@ import { isWan2gpModelId, getLocalModelById, localT2VModels, localI2VModels } fr
 import { higgsfield, isHiggsfieldAvailable } from '../lib/higgsfieldClient.js';
 import { HIGGSFIELD_VIDEO_MODELS, isHiggsfieldModelId, getHiggsfieldModelById } from '../lib/higgsfieldModels.js';
 import { SettingsModal } from './SettingsModal.js';
+import { comfy, isComfyAvailable } from '../lib/comfyClient.js';
+
+// ComfyUI is the only local path on a Mac that actually produces video, so it
+// is offered as one entry rather than a model list: the provider picks the
+// LTX checkpoint and T5 encoder it finds on disk.
+const COMFY_VIDEO_MODEL = {
+    id: 'comfy-local-video',
+    name: 'Local (ComfyUI)',
+    provider: 'comfyui',
+    hasPrompt: true,
+    promptRequired: true,
+    inputs: {
+        prompt: { type: 'string', name: 'prompt', title: 'Prompt' },
+        aspect_ratio: { type: 'string', name: 'aspect_ratio', title: 'Aspect ratio', enum: ['16:9', '9:16', '1:1'], default: '16:9' },
+        duration: { type: 'integer', name: 'duration', title: 'Duration', enum: [2, 3, 4], default: 2 },
+    },
+};
+const isComfyModelId = (id) => id === COMFY_VIDEO_MODEL.id;
 
 // Promotes a Higgsfield catalogue entry into the `inputs`-shaped descriptor
 // the Video Studio dropdowns expect, same trick as adaptLocalToVideoEntry.
@@ -53,7 +71,8 @@ export function VideoStudio() {
     const hfAvailable = isHiggsfieldAvailable();
     const hfT2V = hfAvailable ? HIGGSFIELD_VIDEO_MODELS.filter((m) => !m.needsImage).map(adaptHiggsfieldToVideoEntry) : [];
     const hfI2V = hfAvailable ? HIGGSFIELD_VIDEO_MODELS.filter((m) => m.needsImage).map(adaptHiggsfieldToVideoEntry) : [];
-    const allT2V = [...t2vModels, ...localT2V, ...hfT2V];
+    const comfyT2V = isComfyAvailable() ? [COMFY_VIDEO_MODEL] : [];
+    const allT2V = [...comfyT2V, ...t2vModels, ...localT2V, ...hfT2V];
     const allI2V = [...i2vModels, ...localI2V, ...hfI2V];
 
     // --- State ---
@@ -1144,6 +1163,12 @@ export function VideoStudio() {
 
         const isLocal = isWan2gpModelId(selectedModel);
         const isHf = isHiggsfieldModelId(selectedModel);
+        const isComfy = isComfyModelId(selectedModel);
+
+        if (isComfy && !(await comfy.isInstalled())) {
+            document.body.appendChild(SettingsModal(null, 'comfy'));
+            return;
+        }
 
         if (isHf && !(await higgsfield.isConfigured())) {
             document.body.appendChild(SettingsModal(null, 'higgsfield'));
@@ -1151,7 +1176,7 @@ export function VideoStudio() {
         }
 
         // Local Wan2GP and Higgsfield generations don't go through Muapi — skip the auth gate.
-        if (!isLocal && !isHf) {
+        if (!isLocal && !isHf && !isComfy) {
             const apiKey = localStorage.getItem('muapi_key');
             if (!apiKey) {
                 AuthModal(() => generateBtn.click());
@@ -1165,7 +1190,7 @@ export function VideoStudio() {
 
         // For local generations, surface step progress in the button label.
         let unsubscribeProgress = null;
-        if (isLocal || isHf) {
+        if (isLocal || isHf || isComfy) {
             unsubscribeProgress = localAI.onProgress(({ status, progress, message }) => {
                 const pct = typeof progress === 'number' ? Math.round(progress * 100) : null;
                 const label = message || `${status || t('common.generating')}${pct != null ? ` ${pct}%` : '...'}`;
@@ -1183,6 +1208,32 @@ export function VideoStudio() {
         };
 
         try {
+            // ─── ComfyUI local path (free, offline) ──────────────────────────
+            if (isComfy) {
+                const res = await comfy.generate({
+                    kind: 'video',
+                    prompt: prompt || '',
+                    aspect_ratio: selectedAr,
+                    seconds: Number(selectedDuration) || 2,
+                });
+                if (!res?.url) throw new Error('O ComfyUI não devolveu vídeo.');
+                lastGenerationId = null;
+                lastGenerationModel = null;
+                addToHistory({
+                    id: Date.now().toString(),
+                    url: res.url,
+                    prompt,
+                    model: selectedModel,
+                    aspect_ratio: selectedAr,
+                    duration: selectedDuration,
+                    timestamp: new Date().toISOString(),
+                });
+                showVideoInCanvas(res.url, selectedModel);
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = t('common.generate');
+                return;
+            }
+
             // ─── Higgsfield API path ─────────────────────────────────────────
             if (isHf) {
                 const hm = getHiggsfieldModelById(selectedModel);

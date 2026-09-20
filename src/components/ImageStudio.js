@@ -4,6 +4,7 @@ import { higgsfield, isHiggsfieldAvailable } from '../lib/higgsfieldClient.js';
 import { HIGGSFIELD_IMAGE_MODELS } from '../lib/higgsfieldModels.js';
 import { OPENROUTER_IMAGE_MODELS } from '../lib/openrouterModels.js';
 import { generateImage as orGenerateImage, isOpenrouterConfigured } from '../lib/openrouterImages.js';
+import { comfy, isComfyAvailable } from '../lib/comfyClient.js';
 import { SettingsModal } from './SettingsModal.js';
 import {
     t2iModels, getAspectRatiosForModel, getResolutionsForModel, getQualityFieldForModel,
@@ -56,6 +57,17 @@ export function ImageStudio() {
     let selectedHfModel = (hfModels.find((m) => m.featured) || hfModels[0] || {}).id || '';
     // OpenRouter: same key as the Prompt LLM setting, cents per image.
     let useOpenrouter = false;
+    // ComfyUI: local, free, and about nine times faster than the sd.cpp engine
+    // on this hardware. The provider picks the checkpoint unless one is chosen.
+    let useComfy = false;
+    let comfyCheckpoint = '';
+    let comfyCheckpoints = [];
+    if (isComfyAvailable()) {
+        comfy.status().then((st) => {
+            comfyCheckpoints = (st.models?.checkpoints || []).filter((c) => !/ltx/i.test(c));
+            if (!comfyCheckpoint) comfyCheckpoint = comfyCheckpoints[0] || '';
+        }).catch(() => {});
+    }
     const orModels = OPENROUTER_IMAGE_MODELS;
     let selectedOrModel = (orModels.find((m) => m.featured) || orModels[0] || {}).id || '';
     let selectedLocalModel = LOCAL_IMAGE_MODELS[0]?.id || null;
@@ -228,7 +240,7 @@ export function ImageStudio() {
     // Source toggle (Electron only): Muapi API → local engine → Higgsfield API
     let localToggleBtn = null;
     if (isLocalAIAvailable()) {
-        const SOURCES = ['api', 'local', 'or', ...(isHiggsfieldAvailable() ? ['hf'] : [])];
+        const SOURCES = ['api', ...(isComfyAvailable() ? ['comfy'] : []), 'local', 'or', ...(isHiggsfieldAvailable() ? ['hf'] : [])];
         let sourceIndex = 0;
         localToggleBtn = document.createElement('button');
         localToggleBtn.id = 'local-toggle-btn';
@@ -239,6 +251,7 @@ export function ImageStudio() {
             useLocalModel = source === 'local';
             useHiggsfield = source === 'hf';
             useOpenrouter = source === 'or';
+            useComfy = source === 'comfy';
             if (source === 'local') {
                 localToggleBtn.className = base + 'bg-primary/20 border-primary/40 text-primary';
                 localToggleBtn.textContent = t('image.local');
@@ -248,6 +261,9 @@ export function ImageStudio() {
             } else if (source === 'or') {
                 localToggleBtn.className = base + 'bg-violet-500/20 border-violet-400/40 text-violet-300';
                 localToggleBtn.textContent = t('or.source');
+            } else if (source === 'comfy') {
+                localToggleBtn.className = base + 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300';
+                localToggleBtn.textContent = t('comfy.source');
             } else {
                 localToggleBtn.className = base + 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10';
                 localToggleBtn.textContent = t('image.api');
@@ -269,6 +285,8 @@ export function ImageStudio() {
             } else if (useOpenrouter) {
                 const om = orModels.find((m) => m.id === selectedOrModel);
                 if (label) label.textContent = om ? om.name : 'OpenRouter';
+            } else if (useComfy) {
+                if (label) label.textContent = comfyCheckpoint || 'ComfyUI';
             } else if (label) {
                 label.textContent = selectedModelName;
             }
@@ -780,6 +798,37 @@ export function ImageStudio() {
             const renderModels = (filter = '') => {
                 list.innerHTML = '';
 
+                if (useComfy) {
+                    // ── ComfyUI checkpoints found on disk ─────────────────
+                    const filtered = comfyCheckpoints.filter(c => c.toLowerCase().includes(filter.toLowerCase()));
+                    if (filtered.length === 0) {
+                        list.innerHTML = `<div class="text-xs text-muted text-center py-4">${t('comfy.noModels')}</div>`;
+                        return;
+                    }
+                    filtered.forEach(c => {
+                        const item = document.createElement('div');
+                        item.className = `flex items-center justify-between p-3.5 hover:bg-white/5 rounded-2xl cursor-pointer transition-all border border-transparent hover:border-white/5 ${comfyCheckpoint === c ? 'bg-white/5 border-white/5' : ''}`;
+                        item.innerHTML = `
+                            <div class="flex items-center gap-3.5">
+                                <div class="w-10 h-10 bg-emerald-500/10 text-emerald-300 border border-white/5 rounded-xl flex items-center justify-center font-black text-[10px]">CU</div>
+                                <div class="flex flex-col gap-0.5">
+                                    <span class="text-xs font-bold text-white tracking-tight">${c.replace(/\.(safetensors|ckpt|gguf)$/i, '')}</span>
+                                    <span class="text-[10px] text-muted">${t('comfy.freeLocal')}</span>
+                                </div>
+                            </div>
+                            ${comfyCheckpoint === c ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="4"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+                        `;
+                        item.onclick = (e) => {
+                            e.stopPropagation();
+                            comfyCheckpoint = c;
+                            document.getElementById('model-btn-label').textContent = c.replace(/\.(safetensors|ckpt|gguf)$/i, '');
+                            closeDropdown();
+                        };
+                        list.appendChild(item);
+                    });
+                    return;
+                }
+
                 if (useOpenrouter) {
                     // ── OpenRouter model list, cheapest first ─────────────
                     const filtered = orModels.filter(m =>
@@ -1269,6 +1318,71 @@ export function ImageStudio() {
                 alert('Please enter a prompt to generate an image.');
                 return;
             }
+        }
+
+        // ── ComfyUI local path (free, offline) ────────────────────────────────
+        if (useComfy) {
+            if (!(await comfy.isInstalled())) {
+                document.body.appendChild(SettingsModal(null, 'comfy'));
+                return;
+            }
+
+            hero.classList.add('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = `<span class="animate-spin inline-block mr-2 text-black">◌</span> ${t('common.generating')}`;
+
+            const progressWrap = document.getElementById('local-progress-wrap');
+            const progressFill = document.getElementById('local-progress-fill');
+            const progressPct = document.getElementById('local-progress-pct');
+            progressWrap?.classList.remove('hidden');
+            progressWrap?.classList.add('flex');
+
+            const unsub = comfy.onProgress(({ progress, message }) => {
+                const pct = Math.round((progress ?? 0) * 100);
+                const label = message || `${pct}%`;
+                if (progressFill) progressFill.style.width = `${pct}%`;
+                if (progressPct) progressPct.textContent = label;
+                generateBtn.innerHTML = `<span class="animate-spin inline-block mr-2 text-black">◌</span> ${label}`;
+            });
+
+            let hadError = false;
+            try {
+                const res = await comfy.generate({
+                    kind: 'image',
+                    checkpoint: comfyCheckpoint || undefined,
+                    prompt,
+                    negative_prompt: negativePrompt || undefined,
+                    aspect_ratio: selectedAr,
+                    steps,
+                    cfg_scale: guidanceScale,
+                    seed,
+                });
+                unsub();
+                progressWrap?.classList.replace('flex', 'hidden');
+                progressWrap?.classList.add('hidden');
+                addToHistory({
+                    id: Date.now().toString(),
+                    url: res.url,
+                    prompt,
+                    model: `comfyui:${comfyCheckpoint || 'auto'}`,
+                    aspect_ratio: selectedAr,
+                    seed: res.seed,
+                    timestamp: new Date().toISOString(),
+                });
+                showImageInCanvas(res.url);
+            } catch (e) {
+                hadError = true;
+                unsub();
+                progressWrap?.classList.add('hidden');
+                console.error('[ComfyUI] generation error:', e);
+                hero.classList.remove('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
+                generateBtn.innerHTML = `Error: ${String(e.message).slice(0, 120)}`;
+                setTimeout(() => { generateBtn.innerHTML = t('common.generate'); }, 8000);
+            } finally {
+                generateBtn.disabled = false;
+                if (!hadError) generateBtn.innerHTML = t('common.generate');
+            }
+            return;
         }
 
         // ── OpenRouter path ───────────────────────────────────────────────────

@@ -4,6 +4,7 @@ const { register: registerLocalInference } = require('./lib/localInference');
 const { register: registerWan2gp } = require('./lib/wan2gpProvider');
 const { register: registerHiggsfield } = require('./lib/higgsfieldProvider');
 const { register: registerOpenrouterKey } = require('./lib/openrouterKey');
+const { register: registerComfy } = require('./lib/comfyProvider');
 
 process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
@@ -77,6 +78,7 @@ app.whenReady().then(() => {
         registerWan2gp();
         registerHiggsfield();
         registerOpenrouterKey();
+        registerComfy();
     } catch (err) {
         console.error('Failed to register local-ai/wan2gp/higgsfield handlers:', err);
         dialog.showErrorBox(
