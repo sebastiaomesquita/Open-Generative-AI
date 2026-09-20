@@ -6,11 +6,18 @@ export const LLM_KEYS = {
     baseUrl: 'llm_base_url',
     apiKey: 'llm_api_key',
     model: 'llm_model',
+    fallbackUrl: 'llm_fallback_url',
+    fallbackModel: 'llm_fallback_model',
 };
 
 export const LLM_DEFAULTS = {
     baseUrl: 'https://openrouter.ai/api/v1',
     model: 'deepseek/deepseek-v4-flash',
+    // Offline backup. llama-server serves an OpenAI-compatible API, so the
+    // same code path reaches it; Ollama on :11434 and LM Studio on :1234 also
+    // answer here. Costs nothing and needs no key.
+    fallbackUrl: 'http://127.0.0.1:11434/v1',
+    fallbackModel: 'local',
 };
 
 const LOCAL_HOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?(\/|$)/i;
@@ -35,19 +42,33 @@ function storageOf(storage) {
 export function getLlmSettings(storage) {
     const s = storageOf(storage);
     const read = (k) => (s?.getItem(k) || '').trim();
+    const rawFallback = read(LLM_KEYS.fallbackUrl);
     return {
         baseUrl: normalizeBaseUrl(read(LLM_KEYS.baseUrl)),
         apiKey: read(LLM_KEYS.apiKey),
         model: read(LLM_KEYS.model) || LLM_DEFAULTS.model,
+        // An empty string here is a deliberate "no fallback", so only an
+        // absent key falls back to the default.
+        fallbackUrl: s?.getItem(LLM_KEYS.fallbackUrl) === null
+            ? LLM_DEFAULTS.fallbackUrl
+            : (rawFallback ? normalizeBaseUrl(rawFallback) : ''),
+        fallbackModel: read(LLM_KEYS.fallbackModel) || LLM_DEFAULTS.fallbackModel,
     };
 }
 
-export function saveLlmSettings({ baseUrl, apiKey, model }, storage) {
+export function saveLlmSettings({ baseUrl, apiKey, model, fallbackUrl, fallbackModel }, storage) {
     const s = storageOf(storage);
     if (!s) return;
     s.setItem(LLM_KEYS.baseUrl, normalizeBaseUrl(baseUrl));
     s.setItem(LLM_KEYS.apiKey, String(apiKey || '').trim());
     s.setItem(LLM_KEYS.model, String(model || '').trim() || LLM_DEFAULTS.model);
+    if (fallbackUrl !== undefined) {
+        const clean = String(fallbackUrl || '').trim();
+        s.setItem(LLM_KEYS.fallbackUrl, clean ? normalizeBaseUrl(clean) : '');
+    }
+    if (fallbackModel !== undefined) {
+        s.setItem(LLM_KEYS.fallbackModel, String(fallbackModel || '').trim() || LLM_DEFAULTS.fallbackModel);
+    }
 }
 
 // A local server (Ollama / LM Studio) is usable without a key.
@@ -101,25 +122,11 @@ function describeHttpError(status, body) {
     return `HTTP ${status}. ${detail}`.trim();
 }
 
-export async function enhancePrompt(prompt, {
-    kind = 'image',
-    settings,
-    fetchImpl,
-    timeoutMs = 45_000,
-    signal,
-} = {}) {
-    const clean = String(prompt || '').trim();
-    if (!clean) throw new Error('Prompt is empty.');
-
-    const s = settings || getLlmSettings();
-    if (!isLlmConfigured(s)) throw new Error('Prompt LLM is not configured.');
-
-    const doFetch = fetchImpl || (typeof fetch === 'function' ? fetch : null);
-    if (!doFetch) throw new Error('fetch is not available.');
-
+/** One call against one endpoint. No retry, no fallback — that lives above. */
+async function callChat({ baseUrl, apiKey, model }, prompt, { kind, doFetch, timeoutMs, signal }) {
     const headers = { 'Content-Type': 'application/json' };
-    if (s.apiKey) headers.Authorization = `Bearer ${s.apiKey}`;
-    if (/openrouter\.ai/i.test(s.baseUrl)) {
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    if (/openrouter\.ai/i.test(baseUrl)) {
         headers['HTTP-Referer'] = 'https://github.com/Anil-matcha/Open-Generative-AI';
         headers['X-Title'] = 'Open Generative AI';
     }
@@ -130,13 +137,13 @@ export async function enhancePrompt(prompt, {
 
     let res;
     try {
-        res = await doFetch(`${s.baseUrl}/chat/completions`, {
+        res = await doFetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers,
             signal: controller.signal,
             body: JSON.stringify({
-                model: s.model,
-                messages: buildMessages(clean, kind),
+                model,
+                messages: buildMessages(prompt, kind),
                 temperature: 0.7,
                 max_tokens: 400,
             }),
@@ -150,10 +157,72 @@ export async function enhancePrompt(prompt, {
 
     let body = null;
     try { body = await res.json(); } catch { body = null; }
-
     if (!res.ok) throw new Error(describeHttpError(res.status, body));
 
     const text = extractEnhancedPrompt(body);
     if (!text) throw new Error('The model returned an empty response.');
     return text;
+}
+
+/**
+ * Rewrites the prompt through the configured endpoint, and if that endpoint
+ * cannot be reached — no connection, dead key, spent credit — through the
+ * local one.
+ *
+ * The fallback exists because the user asked to keep working offline: the
+ * cloud call costs a fraction of a cent but needs a network, while a local
+ * llama-server costs nothing and needs none. It is not a retry: a single
+ * attempt each, and the result says which endpoint answered.
+ */
+export async function enhancePrompt(prompt, {
+    kind = 'image',
+    settings,
+    fetchImpl,
+    timeoutMs = 45_000,
+    signal,
+    withMeta = false,
+} = {}) {
+    const clean = String(prompt || '').trim();
+    if (!clean) throw new Error('Prompt is empty.');
+
+    const s = settings || getLlmSettings();
+    const doFetch = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+    if (!doFetch) throw new Error('fetch is not available.');
+
+    const opts = { kind, doFetch, timeoutMs, signal };
+    const hasFallback = Boolean(s.fallbackUrl);
+    const primaryUsable = isLlmConfigured(s);
+
+    const done = (text, via) => (withMeta ? { text, via } : text);
+
+    if (primaryUsable) {
+        try {
+            return done(await callChat(s, clean, opts), 'primary');
+        } catch (err) {
+            if (!hasFallback) throw err;
+            // Fall through to the local endpoint, but keep the original
+            // reason: if the fallback is down too, that is what the user
+            // needs to read, not "connection refused".
+            try {
+                const text = await callChat(
+                    { baseUrl: s.fallbackUrl, apiKey: '', model: s.fallbackModel },
+                    clean,
+                    { ...opts, timeoutMs: Math.max(timeoutMs, 90_000) },
+                );
+                return done(text, 'fallback');
+            } catch (fallbackErr) {
+                throw new Error(`${err.message} Local backup also failed: ${fallbackErr.message}`);
+            }
+        }
+    }
+
+    if (!hasFallback) throw new Error('Prompt LLM is not configured.');
+    return done(
+        await callChat(
+            { baseUrl: s.fallbackUrl, apiKey: '', model: s.fallbackModel },
+            clean,
+            { ...opts, timeoutMs: Math.max(timeoutMs, 90_000) },
+        ),
+        'fallback',
+    );
 }

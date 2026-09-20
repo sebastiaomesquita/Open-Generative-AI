@@ -3,6 +3,7 @@ import { isLocalAIAvailable } from '../lib/localInferenceClient.js';
 import { t } from '../lib/i18n.js';
 import { getLlmSettings, saveLlmSettings, enhancePrompt, normalizeBaseUrl, LLM_DEFAULTS } from '../lib/promptLlm.js';
 import { higgsfield, isHiggsfieldAvailable } from '../lib/higgsfieldClient.js';
+import { LLM_MODELS } from '../lib/llmModels.js';
 
 export function SettingsModal(onClose, initialTab = 'api') {
     const overlay = document.createElement('div');
@@ -90,9 +91,21 @@ export function SettingsModal(onClose, initialTab = 'api') {
             </div>
             <div>
                 <label style="${llmLabel}">${t('settings.llmModel')}</label>
-                <input id="llm-model" type="text" style="${llmInput}" value="${esc(llm.model)}" spellcheck="false">
+                <select id="llm-model-pick" style="${llmInput}">
+                    ${LLM_MODELS.map((m) => `<option value="${esc(m.id)}" ${m.id === llm.model ? 'selected' : ''}>${esc(m.name)} — ${m.usdPer1000 === 0 ? t('settings.llmFree') : `US$ ${m.usdPer1000.toFixed(3)} / 1000`}</option>`).join('')}
+                    <option value="__custom__" ${LLM_MODELS.some((m) => m.id === llm.model) ? '' : 'selected'}>${t('settings.llmCustom')}</option>
+                </select>
+                <input id="llm-model" type="text" style="${llmInput};margin-top:0.4rem;${LLM_MODELS.some((m) => m.id === llm.model) ? 'display:none;' : ''}" value="${esc(llm.model)}" spellcheck="false">
             </div>
             <p style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin:0;">${t('settings.llmNote')}</p>
+
+            <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:0.75rem;margin-top:0.25rem;">
+                <label style="${llmLabel}">${t('settings.llmFallbackUrl')}</label>
+                <input id="llm-fallback-url" type="text" style="${llmInput}" value="${esc(llm.fallbackUrl)}" spellcheck="false" placeholder="${esc(LLM_DEFAULTS.fallbackUrl)}">
+                <label style="${llmLabel};margin-top:0.5rem;">${t('settings.llmFallbackModel')}</label>
+                <input id="llm-fallback-model" type="text" style="${llmInput}" value="${esc(llm.fallbackModel)}" spellcheck="false">
+                <p style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin:0.4rem 0 0;">${t('settings.llmFallbackNote')}</p>
+            </div>
             <p id="llm-test-status" style="font-size:0.75rem;color:rgba(255,255,255,0.6);margin:0;min-height:1.2em;white-space:pre-wrap;"></p>
             <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.5rem;">
                 <button id="llm-test-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:none;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-size:0.75rem;font-weight:700;cursor:pointer;">${t('common.test')}</button>
@@ -100,11 +113,20 @@ export function SettingsModal(onClose, initialTab = 'api') {
             </div>
         </div>
     `;
-    const readLlmForm = () => ({
-        baseUrl: llmPanel.querySelector('#llm-base-url').value,
-        apiKey: llmPanel.querySelector('#llm-api-key').value,
-        model: llmPanel.querySelector('#llm-model').value,
-    });
+    const readLlmForm = () => {
+        const picked = llmPanel.querySelector('#llm-model-pick').value;
+        return {
+            baseUrl: llmPanel.querySelector('#llm-base-url').value,
+            apiKey: llmPanel.querySelector('#llm-api-key').value,
+            model: picked === '__custom__' ? llmPanel.querySelector('#llm-model').value : picked,
+            fallbackUrl: llmPanel.querySelector('#llm-fallback-url').value,
+            fallbackModel: llmPanel.querySelector('#llm-fallback-model').value,
+        };
+    };
+    // The free-text field only matters when the picker is on "custom".
+    llmPanel.querySelector('#llm-model-pick').onchange = (e) => {
+        llmPanel.querySelector('#llm-model').style.display = e.target.value === '__custom__' ? '' : 'none';
+    };
 
     // ── Tab: Higgsfield API ───────────────────────────────────────────────────
     const hfPanel = document.createElement('div');
@@ -196,9 +218,12 @@ export function SettingsModal(onClose, initialTab = 'api') {
                 baseUrl: normalizeBaseUrl(form.baseUrl),
                 apiKey: form.apiKey.trim(),
                 model: form.model.trim() || LLM_DEFAULTS.model,
+                fallbackUrl: form.fallbackUrl.trim() ? normalizeBaseUrl(form.fallbackUrl) : '',
+                fallbackModel: form.fallbackModel.trim() || LLM_DEFAULTS.fallbackModel,
             };
-            const out = await enhancePrompt('a cat sleeping on a windowsill', { settings, timeoutMs: 30_000 });
-            status.textContent = t('settings.llmTestOk') + out;
+            const out = await enhancePrompt('a cat sleeping on a windowsill', { settings, timeoutMs: 30_000, withMeta: true });
+            const via = out.via === 'fallback' ? t('settings.llmViaLocal') : '';
+            status.textContent = t('settings.llmTestOk') + via + out.text;
         } catch (err) {
             status.textContent = t('settings.llmTestFail') + (err?.message || err);
         } finally {
