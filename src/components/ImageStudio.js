@@ -2,6 +2,8 @@ import { muapi } from '../lib/muapi.js';
 import { EnhanceButton } from './EnhanceButton.js';
 import { higgsfield, isHiggsfieldAvailable } from '../lib/higgsfieldClient.js';
 import { HIGGSFIELD_IMAGE_MODELS } from '../lib/higgsfieldModels.js';
+import { OPENROUTER_IMAGE_MODELS } from '../lib/openrouterModels.js';
+import { generateImage as orGenerateImage, isOpenrouterConfigured } from '../lib/openrouterImages.js';
 import { SettingsModal } from './SettingsModal.js';
 import {
     t2iModels, getAspectRatiosForModel, getResolutionsForModel, getQualityFieldForModel,
@@ -52,6 +54,10 @@ export function ImageStudio() {
     let useHiggsfield = false;
     const hfModels = HIGGSFIELD_IMAGE_MODELS;
     let selectedHfModel = (hfModels.find((m) => m.featured) || hfModels[0] || {}).id || '';
+    // OpenRouter: same key as the Prompt LLM setting, cents per image.
+    let useOpenrouter = false;
+    const orModels = OPENROUTER_IMAGE_MODELS;
+    let selectedOrModel = (orModels.find((m) => m.featured) || orModels[0] || {}).id || '';
     let selectedLocalModel = LOCAL_IMAGE_MODELS[0]?.id || null;
     let localGenProgress = 0; // 0–1
 
@@ -126,8 +132,15 @@ export function ImageStudio() {
         anchorContainer: container,
         uploadFn: (file) => useLocalModel ? URL.createObjectURL(file)
             : useHiggsfield ? higgsfield.uploadImage(file)
+            // OpenRouter takes a data URI directly, so no upload round-trip.
+            : useOpenrouter ? new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error('Não consegui ler o arquivo.'));
+                reader.readAsDataURL(file);
+            })
             : muapi.uploadFile(file),
-        requireApiKey: () => !useLocalModel && !useHiggsfield,
+        requireApiKey: () => !useLocalModel && !useHiggsfield && !useOpenrouter,
         onSelect: ({ url, urls }) => {
             uploadedImageUrls = urls || [url];
             if (!imageMode) {
@@ -215,7 +228,7 @@ export function ImageStudio() {
     // Source toggle (Electron only): Muapi API → local engine → Higgsfield API
     let localToggleBtn = null;
     if (isLocalAIAvailable()) {
-        const SOURCES = ['api', 'local', ...(isHiggsfieldAvailable() ? ['hf'] : [])];
+        const SOURCES = ['api', 'local', 'or', ...(isHiggsfieldAvailable() ? ['hf'] : [])];
         let sourceIndex = 0;
         localToggleBtn = document.createElement('button');
         localToggleBtn.id = 'local-toggle-btn';
@@ -225,12 +238,16 @@ export function ImageStudio() {
             const source = SOURCES[sourceIndex];
             useLocalModel = source === 'local';
             useHiggsfield = source === 'hf';
+            useOpenrouter = source === 'or';
             if (source === 'local') {
                 localToggleBtn.className = base + 'bg-primary/20 border-primary/40 text-primary';
                 localToggleBtn.textContent = t('image.local');
             } else if (source === 'hf') {
                 localToggleBtn.className = base + 'bg-fuchsia-500/20 border-fuchsia-400/40 text-fuchsia-300';
                 localToggleBtn.textContent = t('hf.source');
+            } else if (source === 'or') {
+                localToggleBtn.className = base + 'bg-violet-500/20 border-violet-400/40 text-violet-300';
+                localToggleBtn.textContent = t('or.source');
             } else {
                 localToggleBtn.className = base + 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10';
                 localToggleBtn.textContent = t('image.api');
@@ -249,6 +266,9 @@ export function ImageStudio() {
             } else if (useHiggsfield) {
                 const hm = hfModels.find((m) => m.id === selectedHfModel);
                 if (label) label.textContent = hm ? hm.name : 'Higgsfield';
+            } else if (useOpenrouter) {
+                const om = orModels.find((m) => m.id === selectedOrModel);
+                if (label) label.textContent = om ? om.name : 'OpenRouter';
             } else if (label) {
                 label.textContent = selectedModelName;
             }
@@ -760,6 +780,43 @@ export function ImageStudio() {
             const renderModels = (filter = '') => {
                 list.innerHTML = '';
 
+                if (useOpenrouter) {
+                    // ── OpenRouter model list, cheapest first ─────────────
+                    const filtered = orModels.filter(m =>
+                        m.name.toLowerCase().includes(filter.toLowerCase()) ||
+                        m.id.toLowerCase().includes(filter.toLowerCase())
+                    );
+                    if (filtered.length === 0) {
+                        list.innerHTML = `<div class="text-xs text-muted text-center py-4">${t('common.noResults')}</div>`;
+                        return;
+                    }
+                    filtered.forEach(m => {
+                        const item = document.createElement('div');
+                        item.className = `flex items-center justify-between p-3.5 hover:bg-white/5 rounded-2xl cursor-pointer transition-all border border-transparent hover:border-white/5 ${selectedOrModel === m.id ? 'bg-white/5 border-white/5' : ''}`;
+                        item.innerHTML = `
+                            <div class="flex items-center gap-3.5">
+                                <div class="w-10 h-10 bg-violet-500/10 text-violet-300 border border-white/5 rounded-xl flex items-center justify-center font-black text-[10px] shadow-inner">OR</div>
+                                <div class="flex flex-col gap-0.5">
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-xs font-bold text-white tracking-tight">${m.name}</span>
+                                        <span class="text-[9px] font-black px-1 py-0.5 rounded bg-violet-500/20 text-violet-300">~US$ ${m.approxUsd.toFixed(2)}</span>
+                                    </div>
+                                    <span class="text-[10px] text-muted">${m.description}</span>
+                                </div>
+                            </div>
+                            ${selectedOrModel === m.id ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="4"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+                        `;
+                        item.onclick = (e) => {
+                            e.stopPropagation();
+                            selectedOrModel = m.id;
+                            document.getElementById('model-btn-label').textContent = m.name;
+                            closeDropdown();
+                        };
+                        list.appendChild(item);
+                    });
+                    return;
+                }
+
                 if (useHiggsfield) {
                     // ── Higgsfield API model list ─────────────────────────
                     const filtered = hfModels.filter(m =>
@@ -1212,6 +1269,53 @@ export function ImageStudio() {
                 alert('Please enter a prompt to generate an image.');
                 return;
             }
+        }
+
+        // ── OpenRouter path ───────────────────────────────────────────────────
+        if (useOpenrouter) {
+            const om = orModels.find((m) => m.id === selectedOrModel);
+            if (!om) { alert(t('or.noModel')); return; }
+            if (!isOpenrouterConfigured()) {
+                document.body.appendChild(SettingsModal(null, 'llm'));
+                return;
+            }
+
+            hero.classList.add('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = `<span class="animate-spin inline-block mr-2 text-black">◌</span> ${t('common.generating')}`;
+
+            let hadError = false;
+            try {
+                const res = await orGenerateImage({
+                    model: om.id,
+                    prompt,
+                    referenceUrls: uploadedImageUrls,
+                });
+                addToHistory({
+                    id: Date.now().toString(),
+                    url: res.url,
+                    prompt,
+                    model: `openrouter:${om.id}`,
+                    aspect_ratio: selectedAr,
+                    timestamp: new Date().toISOString(),
+                });
+                showImageInCanvas(res.url);
+                // The real price only exists after the call, so show what was charged.
+                if (res.cost > 0) {
+                    generateBtn.innerHTML = `${t('common.generate')} · US$ ${res.cost.toFixed(4)}`;
+                    setTimeout(() => { generateBtn.innerHTML = t('common.generate'); }, 5000);
+                }
+            } catch (e) {
+                hadError = true;
+                console.error('[OpenRouter] generation error:', e);
+                hero.classList.remove('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
+                generateBtn.innerHTML = `Error: ${String(e.message).slice(0, 120)}`;
+                setTimeout(() => { generateBtn.innerHTML = t('common.generate'); }, 8000);
+            } finally {
+                generateBtn.disabled = false;
+                if (!hadError && !generateBtn.innerHTML.includes('US$')) generateBtn.innerHTML = t('common.generate');
+            }
+            return;
         }
 
         // ── Higgsfield API path ───────────────────────────────────────────────

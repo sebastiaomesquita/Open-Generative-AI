@@ -99,7 +99,7 @@ const translations = {
         'settings.llmBaseUrl': 'Base URL (OpenAI-compatible)',
         'settings.llmKey': 'API key',
         'settings.llmModel': 'Model',
-        'settings.llmNote': 'Default is OpenRouter. Ollama (http://localhost:11434/v1) and LM Studio (http://localhost:1234/v1) work too and need no key. The key is stored locally and only sent to the Base URL above.',
+        'settings.llmNote': 'Default is OpenRouter. Ollama (http://localhost:11434/v1) and LM Studio (http://localhost:1234/v1) work too and need no key. The key is stored locally and only sent to the Base URL above. An OpenRouter key here also pays for the OpenRouter image source in the studio.',
         'settings.llmTestOk': 'OK — ',
         'settings.llmTestFail': 'Failed — ',
         'common.enhance': 'Enhance prompt',
@@ -117,6 +117,8 @@ const translations = {
         'settings.hfClear': 'Remove',
         'hf.source': 'Higgsfield',
         'hf.noModel': 'Select a Higgsfield model first.',
+        'or.source': 'OpenRouter',
+        'or.noModel': 'Select an OpenRouter model first.',
 
         // Auth Modal
         'auth.title': 'Muapi API Key Required',
@@ -322,7 +324,7 @@ const translations = {
         'settings.llmBaseUrl': '接口地址（OpenAI 兼容）',
         'settings.llmKey': 'API 密钥',
         'settings.llmModel': '模型',
-        'settings.llmNote': '默认使用 OpenRouter。也支持 Ollama（http://localhost:11434/v1）和 LM Studio（http://localhost:1234/v1），无需密钥。密钥仅存储在本地，只会发送到上方的接口地址。',
+        'settings.llmNote': '默认使用 OpenRouter。也支持 Ollama（http://localhost:11434/v1）和 LM Studio（http://localhost:1234/v1），无需密钥。密钥仅存储在本地，只会发送到上方的接口地址。在此填写的 OpenRouter 密钥同样用于工作室中的 OpenRouter 图像来源。',
         'settings.llmTestOk': '成功 — ',
         'settings.llmTestFail': '失败 — ',
         'common.enhance': '优化提示词',
@@ -340,6 +342,8 @@ const translations = {
         'settings.hfClear': '删除',
         'hf.source': 'Higgsfield',
         'hf.noModel': '请先选择一个 Higgsfield 模型。',
+        'or.source': 'OpenRouter',
+        'or.noModel': '请先选择一个 OpenRouter 模型。',
 
         // Auth Modal
         'auth.title': '需要 Muapi API 密钥',
