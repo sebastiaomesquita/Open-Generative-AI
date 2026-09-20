@@ -1,8 +1,9 @@
 import { LocalModelManager } from './LocalModelManager.js';
 import { isLocalAIAvailable } from '../lib/localInferenceClient.js';
 import { t } from '../lib/i18n.js';
+import { getLlmSettings, saveLlmSettings, enhancePrompt, normalizeBaseUrl, LLM_DEFAULTS } from '../lib/promptLlm.js';
 
-export function SettingsModal(onClose) {
+export function SettingsModal(onClose, initialTab = 'api') {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:100;';
 
@@ -23,6 +24,7 @@ export function SettingsModal(onClose) {
     // ── Tabs ──────────────────────────────────────────────────────────────────
     const TABS = [
         { id: 'api', label: t('settings.apiKey') },
+        { id: 'llm', label: t('settings.llm') },
         ...(isLocalAIAvailable() ? [{ id: 'local', label: t('settings.localModels') }] : []),
     ];
 
@@ -68,6 +70,40 @@ export function SettingsModal(onClose) {
         </div>
     `;
 
+    // ── Tab: Prompt LLM (OpenRouter / Ollama / LM Studio) ─────────────────────
+    const llm = getLlmSettings();
+    const llmInput = 'width:100%;box-sizing:border-box;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:0.75rem;padding:0.6rem 0.9rem;color:#fff;font-size:0.875rem;outline:none;';
+    const llmLabel = 'display:block;font-size:0.75rem;color:rgba(255,255,255,0.5);margin-bottom:0.4rem;font-weight:600;';
+    const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const llmPanel = document.createElement('div');
+    llmPanel.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:0.75rem;">
+            <div>
+                <label style="${llmLabel}">${t('settings.llmBaseUrl')}</label>
+                <input id="llm-base-url" type="url" style="${llmInput}" value="${esc(llm.baseUrl)}" spellcheck="false">
+            </div>
+            <div>
+                <label style="${llmLabel}">${t('settings.llmKey')}</label>
+                <input id="llm-api-key" type="password" style="${llmInput}" value="${esc(llm.apiKey)}" placeholder="sk-or-v1-...">
+            </div>
+            <div>
+                <label style="${llmLabel}">${t('settings.llmModel')}</label>
+                <input id="llm-model" type="text" style="${llmInput}" value="${esc(llm.model)}" spellcheck="false">
+            </div>
+            <p style="font-size:0.7rem;color:rgba(255,255,255,0.3);margin:0;">${t('settings.llmNote')}</p>
+            <p id="llm-test-status" style="font-size:0.75rem;color:rgba(255,255,255,0.6);margin:0;min-height:1.2em;white-space:pre-wrap;"></p>
+            <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.5rem;">
+                <button id="llm-test-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:none;border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-size:0.75rem;font-weight:700;cursor:pointer;">${t('common.test')}</button>
+                <button id="llm-save-btn" style="padding:0.5rem 1rem;border-radius:0.5rem;background:var(--color-primary,#22d3ee);color:#000;font-size:0.75rem;font-weight:700;cursor:pointer;border:none;">${t('common.save')}</button>
+            </div>
+        </div>
+    `;
+    const readLlmForm = () => ({
+        baseUrl: llmPanel.querySelector('#llm-base-url').value,
+        apiKey: llmPanel.querySelector('#llm-api-key').value,
+        model: llmPanel.querySelector('#llm-model').value,
+    });
+
     // ── Tab: Local Models ─────────────────────────────────────────────────────
     const localPanel = LocalModelManager();
 
@@ -88,10 +124,11 @@ export function SettingsModal(onClose) {
         });
 
         if (id === 'api') body.appendChild(apiPanel);
+        if (id === 'llm') body.appendChild(llmPanel);
         if (id === 'local') body.appendChild(localPanel);
     };
 
-    switchTab('api');
+    switchTab(TABS.some((tab) => tab.id === initialTab) ? initialTab : 'api');
 
     // ── API key save/cancel handlers ──────────────────────────────────────────
     const close = () => {
@@ -107,6 +144,32 @@ export function SettingsModal(onClose) {
             close();
         } else {
             alert(t('settings.invalidKey'));
+        }
+    };
+
+    // ── Prompt LLM save/test handlers ─────────────────────────────────────────
+    llmPanel.querySelector('#llm-save-btn').onclick = () => {
+        saveLlmSettings(readLlmForm());
+        close();
+    };
+    llmPanel.querySelector('#llm-test-btn').onclick = async () => {
+        const status = llmPanel.querySelector('#llm-test-status');
+        const btn = llmPanel.querySelector('#llm-test-btn');
+        btn.disabled = true;
+        status.textContent = t('common.loading');
+        try {
+            const form = readLlmForm();
+            const settings = {
+                baseUrl: normalizeBaseUrl(form.baseUrl),
+                apiKey: form.apiKey.trim(),
+                model: form.model.trim() || LLM_DEFAULTS.model,
+            };
+            const out = await enhancePrompt('a cat sleeping on a windowsill', { settings, timeoutMs: 30_000 });
+            status.textContent = t('settings.llmTestOk') + out;
+        } catch (err) {
+            status.textContent = t('settings.llmTestFail') + (err?.message || err);
+        } finally {
+            btn.disabled = false;
         }
     };
 

@@ -1,4 +1,5 @@
 import { muapi } from '../lib/muapi.js';
+import { EnhanceButton } from './EnhanceButton.js';
 import { t2vModels, getAspectRatiosForVideoModel, getDurationsForModel, getResolutionsForVideoModel, i2vModels, getAspectRatiosForI2VModel, getDurationsForI2VModel, getResolutionsForI2VModel, v2vModels } from '../lib/models.js';
 import { AuthModal } from './AuthModal.js';
 import { t } from '../lib/i18n.js';
@@ -352,6 +353,7 @@ export function VideoStudio() {
     };
 
     topRow.appendChild(textarea);
+    topRow.appendChild(EnhanceButton(textarea, { kind: 'video' }));
     bar.appendChild(topRow);
 
     // Extend mode banner (shown when extend model is active, not editable by user)

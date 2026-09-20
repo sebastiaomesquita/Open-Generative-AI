@@ -1,4 +1,5 @@
 import { muapi } from '../lib/muapi.js';
+import { EnhanceButton } from './EnhanceButton.js';
 import {
     t2iModels, getAspectRatiosForModel, getResolutionsForModel, getQualityFieldForModel,
     i2iModels, getAspectRatiosForI2IModel, getResolutionsForI2IModel, getQualityFieldForI2IModel,
@@ -164,6 +165,7 @@ export function ImageStudio() {
     };
 
     topRow.appendChild(textarea);
+    topRow.appendChild(EnhanceButton(textarea, { kind: 'image' }));
     bar.appendChild(topRow);
 
     // Bottom Row: Controls
