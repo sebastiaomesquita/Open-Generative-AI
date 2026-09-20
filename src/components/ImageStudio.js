@@ -1389,6 +1389,14 @@ export function ImageStudio() {
             const lm = getLocalModelById(selectedLocalModel);
             if (!lm) { alert('No local model selected.'); return; }
 
+            // The local engine is text-to-image only: sd-cli gets no image
+            // argument. Silently dropping a reference the user just uploaded
+            // costs them minutes of GPU time and produces something unrelated,
+            // so say it plainly before spending that time.
+            if (uploadedImageUrls.length) {
+                if (!confirm(t('local.ignoresReference'))) return;
+            }
+
             hero.classList.add('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
             generateBtn.disabled = true;
             generateBtn.innerHTML = `<span class="animate-spin inline-block mr-2 text-black">◌</span> ${t('common.generating')}`;

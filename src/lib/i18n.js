@@ -119,6 +119,7 @@ const translations = {
         'hf.noModel': 'Select a Higgsfield model first.',
         'or.source': 'OpenRouter',
         'or.noModel': 'Select an OpenRouter model first.',
+        'local.ignoresReference': 'Local models generate from text only — the reference image you uploaded will be ignored, and generation takes several minutes.\n\nFor a result based on that image, switch the source to OpenRouter (Nano Banana reads reference images and costs a few cents).\n\nGenerate from the text alone anyway?',
 
         // Auth Modal
         'auth.title': 'Muapi API Key Required',
@@ -344,6 +345,7 @@ const translations = {
         'hf.noModel': '请先选择一个 Higgsfield 模型。',
         'or.source': 'OpenRouter',
         'or.noModel': '请先选择一个 OpenRouter 模型。',
+        'local.ignoresReference': '本地模型只能从文本生成——你上传的参考图会被忽略，而且生成需要几分钟。\n\n如果需要基于该图片的结果，请将来源切换为 OpenRouter（Nano Banana 支持参考图，费用几美分）。\n\n仍然仅按文本生成吗？',
 
         // Auth Modal
         'auth.title': '需要 Muapi API 密钥',
