@@ -95,3 +95,61 @@ test('outputs must not be handed to the renderer as server URLs', () => {
     const returnBlock = src.slice(src.indexOf('const promptId = await submit'), src.indexOf("engine: 'comfyui'"));
     assert.doesNotMatch(returnBlock, /viewUrl\(/, 'the generate() result must not expose viewUrl');
 });
+
+// ── AnimateDiff camera motion ─────────────────────────────────────────────
+
+test('the eight camera moves map to the LoRA files that exist on disk', () => {
+    const moves = Object.keys(wf.CAMERA_MOVES);
+    assert.equal(moves.length, 9, 'eight moves plus "none"');
+    assert.equal(wf.CAMERA_MOVES.none, null);
+    for (const [move, file] of Object.entries(wf.CAMERA_MOVES)) {
+        if (move === 'none') continue;
+        assert.match(file, /^v2_lora_\w+\.ckpt$/, `${move} must name a v2 LoRA`);
+    }
+    // v2 is load-bearing: the LoRAs were trained on the v2 motion module and
+    // do not work over v1.4, v1.5-v1 or v3.
+    assert.ok(Object.values(wf.CAMERA_MOVES).filter(Boolean).every((f) => f.startsWith('v2_lora_')));
+});
+
+test('a camera move inserts the LoRA and chains it into the motion model', () => {
+    const g = wf.animateDiff({
+        checkpoint: 'sd15.safetensors', motionModule: 'mm_sd_v15_v2.ckpt',
+        prompt: 'a coast', width: 512, height: 512, seed: 1, cameraMove: 'pan-left', cameraStrength: 0.7,
+    });
+    assert.equal(g.mlora.inputs.name, 'v2_lora_PanLeft.ckpt');
+    assert.equal(g.mlora.inputs.strength, 0.7);
+    assert.deepEqual(g.apply.inputs.motion_lora, ['mlora', 0]);
+    assert.deepEqual(g.apply.inputs.motion_model, ['motion', 0]);
+    assert.deepEqual(g.evolved.inputs.m_models, ['apply', 0]);
+    assert.equal(g.evolved.inputs.beta_schedule, 'sqrt_linear (AnimateDiff)');
+});
+
+test('without a camera move no LoRA node is created at all', () => {
+    for (const move of ['none', undefined]) {
+        const g = wf.animateDiff({
+            checkpoint: 'a', motionModule: 'b', prompt: 'x',
+            width: 512, height: 512, seed: 1, cameraMove: move,
+        });
+        assert.equal('mlora' in g, false, `${move} must not add a LoRA node`);
+        assert.equal('motion_lora' in g.apply.inputs, false);
+    }
+});
+
+test('frames become the batch, which is how AnimateDiff receives them', () => {
+    const g = wf.animateDiff({
+        checkpoint: 'a', motionModule: 'b', prompt: 'x',
+        width: 512, height: 512, frames: 16, seed: 1,
+    });
+    assert.equal(g.lat.inputs.batch_size, 16, 'frames ride in batch_size, not a length field');
+    assert.equal(g.ctx.inputs.context_length, 16, 'the module was trained on 16');
+    assert.equal(g.save.class_type, 'SaveAnimatedWEBP');
+});
+
+test('AnimateDiff geometry stays on multiples of 8 around the SD 1.5 base', () => {
+    for (const ar of ['16:9', '9:16', '1:1', '4:3']) {
+        const { width, height } = wf.animateDiffGeometry(ar, { base: 448 });
+        assert.equal(width % 8, 0, `${ar} width`);
+        assert.equal(height % 8, 0, `${ar} height`);
+        assert.ok(width >= 256 && height >= 256);
+    }
+});

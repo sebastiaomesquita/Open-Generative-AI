@@ -27,7 +27,25 @@ const COMFY_VIDEO_MODEL = {
         duration: { type: 'integer', name: 'duration', title: 'Duration', enum: [2, 3, 4], default: 2 },
     },
 };
-const isComfyModelId = (id) => id === COMFY_VIDEO_MODEL.id;
+// AnimateDiff: slower per second than LTX, but the only local route with a
+// named camera movement. Offered as its own entry so the choice is explicit.
+const COMFY_MOTION_MODEL = {
+    id: 'comfy-local-motion',
+    name: 'Local · movimento de câmera (AnimateDiff)',
+    provider: 'comfyui',
+    hasPrompt: true,
+    promptRequired: true,
+    inputs: {
+        prompt: { type: 'string', name: 'prompt', title: 'Prompt' },
+        aspect_ratio: { type: 'string', name: 'aspect_ratio', title: 'Aspect ratio', enum: ['16:9', '9:16', '1:1'], default: '16:9' },
+        mode: {
+            type: 'string', name: 'mode', title: 'Camera move', default: 'zoom-in',
+            enum: ['none', 'pan-left', 'pan-right', 'zoom-in', 'zoom-out', 'tilt-up', 'tilt-down', 'roll-cw', 'roll-ccw'],
+        },
+    },
+};
+const isComfyModelId = (id) => id === COMFY_VIDEO_MODEL.id || id === COMFY_MOTION_MODEL.id;
+const isComfyMotionId = (id) => id === COMFY_MOTION_MODEL.id;
 
 // Promotes a Higgsfield catalogue entry into the `inputs`-shaped descriptor
 // the Video Studio dropdowns expect, same trick as adaptLocalToVideoEntry.
@@ -71,7 +89,7 @@ export function VideoStudio() {
     const hfAvailable = isHiggsfieldAvailable();
     const hfT2V = hfAvailable ? HIGGSFIELD_VIDEO_MODELS.filter((m) => !m.needsImage).map(adaptHiggsfieldToVideoEntry) : [];
     const hfI2V = hfAvailable ? HIGGSFIELD_VIDEO_MODELS.filter((m) => m.needsImage).map(adaptHiggsfieldToVideoEntry) : [];
-    const comfyT2V = isComfyAvailable() ? [COMFY_VIDEO_MODEL] : [];
+    const comfyT2V = isComfyAvailable() ? [COMFY_VIDEO_MODEL, COMFY_MOTION_MODEL] : [];
     const allT2V = [...comfyT2V, ...t2vModels, ...localT2V, ...hfT2V];
     const allI2V = [...i2vModels, ...localI2V, ...hfI2V];
 
@@ -1210,11 +1228,15 @@ export function VideoStudio() {
         try {
             // ─── ComfyUI local path (free, offline) ──────────────────────────
             if (isComfy) {
+                const motion = isComfyMotionId(selectedModel);
                 const res = await comfy.generate({
-                    kind: 'video',
+                    kind: motion ? 'motion' : 'video',
                     prompt: prompt || '',
                     aspect_ratio: selectedAr,
                     seconds: Number(selectedDuration) || 2,
+                    // The Mode control already exists in this studio; for the
+                    // AnimateDiff entry its options are the camera moves.
+                    cameraMove: motion ? (selectedMode || 'zoom-in') : undefined,
                 });
                 if (!res?.url) throw new Error('O ComfyUI não devolveu vídeo.');
                 lastGenerationId = null;

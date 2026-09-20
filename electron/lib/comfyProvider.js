@@ -70,7 +70,12 @@ function listModels(install) {
                 .filter((f) => /\.(safetensors|ckpt|gguf)$/i.test(f));
         } catch { return []; }
     };
-    return { checkpoints: read('checkpoints'), textEncoders: read('text_encoders') };
+    return {
+        checkpoints: read('checkpoints'),
+        textEncoders: read('text_encoders'),
+        motionModules: read('animatediff_models'),
+        motionLoras: read('animatediff_motion_lora'),
+    };
 }
 
 // ── Server lifecycle ──────────────────────────────────────────────────────
@@ -270,7 +275,29 @@ async function generate(params, win) {
 
     let graph;
     let maxMs;
-    if (params.kind === 'video') {
+    if (params.kind === 'motion') {
+        // AnimateDiff over SD 1.5: slower per second of footage than LTX, but
+        // the only local route with a named camera movement.
+        const checkpoint = params.checkpoint || checkpoints.find((c) => !/ltx/i.test(c));
+        if (!checkpoint) throw new Error('Nenhum modelo SD 1.5 encontrado em models/checkpoints.');
+        const motionModule = params.motionModule || listModels(install).motionModules[0];
+        if (!motionModule) throw new Error('Módulo de movimento não encontrado em models/animatediff_models.');
+
+        graph = workflows.animateDiff({
+            checkpoint, motionModule,
+            prompt: params.prompt,
+            negativePrompt: params.negative_prompt,
+            ...workflows.animateDiffGeometry(params.aspect_ratio || '16:9', { base: 448 }),
+            frames: 16,
+            steps: Number(params.steps) || 20,
+            cfg: Number(params.cfg_scale) || 7.5,
+            seed,
+            fps: 8,
+            cameraMove: params.cameraMove || 'none',
+            cameraStrength: Number(params.cameraStrength) || 0.8,
+        });
+        maxMs = 45 * 60 * 1000;
+    } else if (params.kind === 'video') {
         const checkpoint = params.checkpoint || checkpoints.find((c) => /ltx/i.test(c));
         if (!checkpoint) throw new Error('Nenhum modelo de vídeo encontrado. Baixe um LTX-Video para models/checkpoints.');
         const textEncoder = params.textEncoder || textEncoders.find((t) => /t5xxl/i.test(t));
@@ -314,7 +341,7 @@ async function generate(params, win) {
     emit(win, { status: 'completed', progress: 1, message: 'Pronto' });
     return {
         url: urls[0],
-        mediaType: params.kind === 'video' ? 'video' : 'image',
+        mediaType: (params.kind === 'video' || params.kind === 'motion') ? 'video' : 'image',
         allUrls: urls,
         seed,
         engine: 'comfyui',
@@ -352,4 +379,4 @@ function register() {
     app.on('will-quit', stop);
 }
 
-module.exports = { register, status, ensureRunning, stop, findInstall, listModels, snapVideoGeometry: workflows.snapVideoGeometry };
+module.exports = { register, status, ensureRunning, stop, findInstall, listModels, snapVideoGeometry: workflows.snapVideoGeometry, CAMERA_MOVES: workflows.CAMERA_MOVES };
