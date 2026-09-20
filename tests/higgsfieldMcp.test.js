@@ -51,9 +51,9 @@ test('credential status reads the environment without touching the keychain', ()
 
 test('every declared tool has a usable schema and a dispatch branch', async () => {
     const { TOOLS, dispatch } = require('../mcp/server');
-    assert.ok(TOOLS.length >= 6);
+    assert.ok(TOOLS.length >= 9);
     for (const tool of TOOLS) {
-        assert.match(tool.name, /^(higgsfield|local)_/);
+        assert.match(tool.name, /^(higgsfield|local|openrouter)_/);
         assert.ok(tool.description.length > 40, `${tool.name} needs a real description`);
         assert.equal(tool.inputSchema.type, 'object');
         for (const req of tool.inputSchema.required || []) {
@@ -65,6 +65,12 @@ test('every declared tool has a usable schema and a dispatch branch', async () =
     assert.match(TOOLS.find((t) => t.name === 'higgsfield_generate').description, /SPENDS REAL MONEY/);
     assert.match(TOOLS.find((t) => t.name === 'local_generate').description, /FREE/);
     assert.match(TOOLS.find((t) => t.name === 'local_generate').description, /no video|Images only/i);
+    assert.match(TOOLS.find((t) => t.name === 'openrouter_generate_image').description, /COSTS MONEY/);
+    // Only Higgsfield does video; the other two must say so, or the agent will
+    // reach for the wrong engine.
+    for (const n of ['local_generate', 'openrouter_generate_image']) {
+        assert.match(TOOLS.find((t) => t.name === n).description, /no video/i, `${n} must rule out video`);
+    }
     await assert.rejects(dispatch('higgsfield_nope', {}, () => {}), /Unknown tool/);
 });
 

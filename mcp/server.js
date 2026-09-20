@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Higgsfield MCP server (stdio) — for Claude Code on this Mac.
 //
-// Two engines behind one server:
-//   - local: stable-diffusion.cpp on this Mac's GPU. Free, offline, images only.
-//   - cloud: the Higgsfield API. Costs money, does video, much higher quality.
-// Prefer local unless the user asks for video or for a cloud-only model.
+// Three engines behind one server:
+//   - local:      stable-diffusion.cpp on this Mac's GPU. Free, offline, images only.
+//   - openrouter: cheap cloud images (Nano Banana, GPT Image). Cents per image.
+//   - higgsfield: the only one that does video. Dearest per job.
+// Prefer local for drafts, OpenRouter when quality matters, Higgsfield for video.
 //
 // Why this exists next to the official remote MCP at mcp.higgsfield.ai:
 //   - it bills the pay-per-use API balance, not the higgsfield.ai plan credits
@@ -24,6 +25,8 @@ const { toPublic, getModelById, buildInput } = require('../electron/lib/higgsfie
 const { resolveCredentials, credentialStatus, saveToKeychain, deleteFromKeychain } = require('./credentialStore');
 const api = require('./api');
 const local = require('./local');
+const openrouter = require('./openrouter');
+const ledger = require('./spendLedger');
 const guard = require('./spendGuard');
 
 const VERSION = '0.1.0';
@@ -185,6 +188,35 @@ const TOOLS = [
         },
     },
     {
+        name: 'openrouter_list_image_models',
+        description: 'List the image models available through OpenRouter, cheapest first, with an approximate price per image and whether each accepts a reference image. Also reports the key status and how much of today\'s budget is left. Free to call.',
+        inputSchema: { type: 'object', properties: {} },
+    },
+    {
+        name: 'openrouter_generate_image',
+        description: 'Generate an image through OpenRouter and save it to disk. COSTS MONEY, typically a few cents per image, billed to the OpenRouter account. Much cheaper than Higgsfield for stills and much better than the local models. Refused once the daily budget is spent. Images only, no video.',
+        inputSchema: {
+            type: 'object',
+            required: ['prompt'],
+            properties: {
+                prompt: { type: 'string', description: 'What to generate.' },
+                model: { type: 'string', description: 'Model id from openrouter_list_image_models. Defaults to google/gemini-2.5-flash-image (Nano Banana), a good cost-to-quality balance.' },
+                input_references: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Reference images to edit or draw from: local file paths, public https URLs, or data URIs.',
+                },
+                size: { type: 'string', description: 'Requested output size, when the model supports it, e.g. 1024x1024.' },
+                output_dir: { type: 'string', description: 'Where to save. Defaults to HF_OUTPUT_DIR or ~/Downloads/higgsfield.' },
+            },
+        },
+    },
+    {
+        name: 'openrouter_spend',
+        description: 'Report how much has been spent on OpenRouter today and this month, per model, against the daily budget. Free to call.',
+        inputSchema: { type: 'object', properties: {} },
+    },
+    {
         name: 'higgsfield_list_models',
         description: 'List the Higgsfield image and video models this server can run, with their allowed aspect ratios, durations and whether they need a reference image. Also reports whether a credential is configured and the current spend ceiling. Call this before generating.',
         inputSchema: {
@@ -246,6 +278,9 @@ async function dispatch(name, args, log) {
     switch (name) {
         case 'local_status': return local.status();
         case 'local_generate': return local.generate(args || {}, log);
+        case 'openrouter_list_image_models': return openrouter.listImageModels();
+        case 'openrouter_generate_image': return openrouter.generateImage(args || {}, log);
+        case 'openrouter_spend': return ledger.summary();
         case 'higgsfield_list_models': return listModels(args || {});
         case 'higgsfield_estimate': return estimateTool(args || {});
         case 'higgsfield_generate': return generateTool(args || {}, log);
@@ -277,7 +312,9 @@ async function main() {
 
     await server.connect(new StdioServerTransport());
     const l = local.status();
-    log(`ready (v${VERSION}); local: ${l.engine_ready ? `${l.ready_models.length} model(s)` : 'engine missing'}; cloud credential: ${credentialStatus().origin}; ceiling: US$ ${guard.ceiling()}`);
+    log(`ready (v${VERSION}); local: ${l.engine_ready ? `${l.ready_models.length} model(s)` : 'engine missing'}; `
+        + `openrouter: ${openrouter.keyStatus().origin} (US$ ${ledger.spentToday().toFixed(4)}/${ledger.dailyBudget().toFixed(2)} today); `
+        + `higgsfield: ${credentialStatus().origin}`);
 }
 
 // ── CLI helpers (not part of the MCP protocol) ────────────────────────────
@@ -289,6 +326,14 @@ if (require.main === module) {
         const { keyId } = saveToKeychain(value);
         console.log(`Saved to the macOS keychain (service "higgsfield-mcp"). Key id: ${keyId}`);
         process.exit(0);
+    } else if (flag === '--save-openrouter-key') {
+        if (!value) { console.error('Usage: node mcp/server.js --save-openrouter-key sk-or-v1-...'); process.exit(1); }
+        const { prefix } = openrouter.saveKey(value);
+        console.log(`Saved to the macOS keychain (service "openrouter-mcp"). Key: ${prefix}`);
+        process.exit(0);
+    } else if (flag === '--delete-openrouter-key') {
+        console.log(openrouter.deleteKey().ok ? 'OpenRouter key removed from the keychain.' : 'No key found.');
+        process.exit(0);
     } else if (flag === '--delete-credential') {
         console.log(deleteFromKeychain().ok ? 'Credential removed from the keychain.' : 'No credential found.');
         process.exit(0);
@@ -298,8 +343,9 @@ if (require.main === module) {
             version: VERSION,
             local_engine_ready: l.engine_ready,
             local_models_ready: l.ready_models,
-            cloud_credential: credentialStatus(),
-            ceiling_usd: guard.ceiling(),
+            openrouter: { ...openrouter.keyStatus(), budget_usd: ledger.dailyBudget(), spent_today_usd: ledger.spentToday() },
+            higgsfield_credential: credentialStatus(),
+            higgsfield_ceiling_usd: guard.ceiling(),
             output_dir: defaultOutputDir(),
         }, null, 2));
         process.exit(0);

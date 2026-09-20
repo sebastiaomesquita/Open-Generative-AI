@@ -3,19 +3,20 @@
 Lets Claude Code generate images and videos from the terminal, on this Mac,
 saving the result straight into the project you are working in.
 
-Two engines behind one server:
+Three engines behind one server:
 
-| | `local_generate` | `higgsfield_generate` |
-|---|---|---|
-| Cost | **free** | pay-per-use USD balance |
-| Runs on | this Mac's GPU, via stable-diffusion.cpp | Higgsfield's servers |
-| Network | none, works offline | required |
-| Media | images only | images and video |
-| Quality | draft to good | state of the art |
-| Speed on an M1 Pro 16 GB | ~4 min (SD 1.5) to ~7 min (Z-Image) | seconds to minutes |
+| | `local_generate` | `openrouter_generate_image` | `higgsfield_generate` |
+|---|---|---|---|
+| Cost | **free** | ~US$ 0.01 to 0.15 per image | per job, usually more |
+| Runs on | this Mac's GPU | OpenRouter | Higgsfield |
+| Network | none, works offline | required | required |
+| Media | images only | images only | **images and video** |
+| Quality | draft to good | very good | state of the art |
+| Speed on an M1 Pro 16 GB | 4 to 7 minutes | seconds | seconds to minutes |
+| Cost control | nothing to control | daily budget | per-job ceiling |
 
-Start local. Reach for the cloud when you need video, or a level of quality a
-2 GB model on a laptop cannot reach.
+Rule of thumb: draft locally for free, finish on OpenRouter, and go to
+Higgsfield only for video, which is the one thing the other two cannot do.
 
 ## Why this exists next to the official MCP
 
@@ -64,6 +65,45 @@ the one to iterate with.
 Output filenames carry the model id and the seed, so running one prompt on two
 models leaves you both files to compare instead of one overwriting the other.
 
+## OpenRouter engine (cheap)
+
+One key covers both halves of the workflow: the desktop app's "Enhance prompt"
+button rewrites the prompt through OpenRouter, and `openrouter_generate_image`
+renders it. Same account, same bill.
+
+```bash
+node mcp/server.js --save-openrouter-key sk-or-v1-...
+```
+
+Keys come from <https://openrouter.ai/keys> and go into the macOS keychain, not
+into a config file.
+
+`openrouter_list_image_models` lists what is available, cheapest first. As of
+today that spans about US$ 0.01 per image for GPT-5 Image Mini up to US$ 0.15
+for Nano Banana Pro, with Nano Banana around US$ 0.04 as the default.
+
+Prices are quoted per output token, not per image, and an image runs about
+1100 to 1300 tokens depending on size. So the list shows a range, and every
+generation returns the real figure OpenRouter charged.
+
+### Daily budget
+
+OpenRouter only reveals a cost after the work is done, so a per-call ceiling
+like Higgsfield's is impossible. Instead every call is written to a ledger and
+checked against a rolling daily budget, **US$ 2.00** by default.
+
+- `OPENROUTER_DAILY_USD` changes it. `OPENROUTER_DAILY_USD=0` freezes spending
+  entirely while leaving the local engine usable.
+- Once the day's budget is gone, the next call is refused **before** the
+  request is sent.
+- `openrouter_spend` reports today's total, the split per model, and the last
+  week.
+- The ledger lives at `~/.higgsfield-mcp/spend.json`, mode 0600, keeping a
+  month of history.
+
+It counts what this server spends, not what the desktop app or any other tool
+spends on the same key. Treat it as a guard rail, not as accounting.
+
 ## Transport, and what that rules out
 
 This is a **stdio** server: Claude Code starts it as a child process. Claude
@@ -98,6 +138,9 @@ Check it any time with `node mcp/server.js --status`.
 
 - **`local_status`** — which local models are ready. Free.
 - **`local_generate`** — generate on this Mac. **Free.**
+- **`openrouter_list_image_models`** — models and prices. Free.
+- **`openrouter_generate_image`** — generate through OpenRouter. **Costs cents.**
+- **`openrouter_spend`** — today's spend against the budget. Free.
 - **`higgsfield_list_models`** — the catalogue, with allowed aspect ratios,
   durations and which models need a reference image. Free.
 - **`higgsfield_estimate`** — what a generation would cost, in USD and credits,
@@ -125,6 +168,9 @@ budget rather than discover the bill afterwards.
 |---|---|---|
 | `HF_CREDENTIALS` | keychain | `KEY_ID:KEY_SECRET`, overrides the keychain |
 | `HF_LOCAL_AI_DIR` | the desktop app's folder | where the local engine and weights live |
+| `OPENROUTER_API_KEY` | keychain | overrides the stored OpenRouter key |
+| `OPENROUTER_DAILY_USD` | `2.00` | daily budget; `0` freezes OpenRouter |
+| `HF_SPEND_LEDGER` | `~/.higgsfield-mcp/spend.json` | where the ledger is written |
 | `HF_MAX_USD` | `0.50` | spend ceiling per generation |
 | `HF_OUTPUT_DIR` | `~/Downloads/higgsfield` | where results are saved |
 | `HF_BASE_URL` | `https://api.higgsfield.ai` | API host, for testing |
