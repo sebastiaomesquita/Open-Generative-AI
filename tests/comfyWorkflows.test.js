@@ -78,3 +78,20 @@ test('an empty negative prompt still gets the default the model needs', () => {
     });
     assert.match(g.neg.inputs.text, /low quality/);
 });
+
+test('outputs must not be handed to the renderer as server URLs', () => {
+    // Regression: returning ComfyUI's /view URL produced a blank canvas. The
+    // window is a file:// page with webSecurity on, so Electron blocks http://
+    // subresources — the image fails to load without raising anything. It would
+    // also rot, because the app stops the server on quit.
+    const src = require('node:fs').readFileSync(
+        require('node:path').join(__dirname, '..', 'electron', 'lib', 'comfyProvider.js'), 'utf8');
+
+    assert.match(src, /async function materialise/, 'results must be fetched, not linked');
+    assert.match(src, /data:\$\{mime\};base64/, 'small results are inlined');
+    assert.match(src, /file:\/\/\$\{dest\}/, 'large results are written to disk');
+
+    // The returned object must never carry a raw viewUrl.
+    const returnBlock = src.slice(src.indexOf('const promptId = await submit'), src.indexOf("engine: 'comfyui'"));
+    assert.doesNotMatch(returnBlock, /viewUrl\(/, 'the generate() result must not expose viewUrl');
+});

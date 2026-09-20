@@ -190,6 +190,37 @@ function viewUrl(item) {
     return `${BASE}/view?${q}`;
 }
 
+const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.webm': 'video/webm' };
+const INLINE_LIMIT = 40 * 1024 * 1024;
+
+/**
+ * Turns a ComfyUI output into something the renderer can actually display.
+ *
+ * The obvious answer — hand over the server's /view URL — does not work: the
+ * window is a file:// page with webSecurity on, so Electron blocks http://
+ * subresources, and the image silently fails to load. It would also rot, since
+ * the app stops the server on quit and every history entry would break.
+ *
+ * So the bytes are fetched here and returned inline. Anything unusually large
+ * is written next to the app's data instead, to keep a video out of a string.
+ */
+async function materialise(item) {
+    const res = await fetch(viewUrl(item));
+    if (!res.ok) throw new Error(`Não consegui ler o resultado do ComfyUI (HTTP ${res.status}).`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const ext = path.extname(item.filename).toLowerCase();
+    const mime = MIME[ext] || 'application/octet-stream';
+
+    if (buf.length <= INLINE_LIMIT) {
+        return `data:${mime};base64,${buf.toString('base64')}`;
+    }
+    const dir = path.join(app.getPath('userData'), 'comfy-output');
+    fs.mkdirSync(dir, { recursive: true });
+    const dest = path.join(dir, `${Date.now()}-${item.filename}`);
+    fs.writeFileSync(dest, buf);
+    return `file://${dest}`;
+}
+
 async function waitFor(promptId, onProgress, maxMs) {
     const started = Date.now();
     let lastPct = -1;
@@ -276,11 +307,15 @@ async function generate(params, win) {
     const files = await waitFor(promptId, onProgress, maxMs);
     if (!files.length) throw new Error('A geração terminou sem produzir arquivo.');
 
+    onProgress({ status: 'in_progress', progress: 0.98, message: 'Carregando o resultado...' });
+    const urls = [];
+    for (const file of files) urls.push(await materialise(file));
+
     emit(win, { status: 'completed', progress: 1, message: 'Pronto' });
     return {
-        url: viewUrl(files[0]),
+        url: urls[0],
         mediaType: params.kind === 'video' ? 'video' : 'image',
-        allUrls: files.map(viewUrl),
+        allUrls: urls,
         seed,
         engine: 'comfyui',
         cost_usd: 0,
