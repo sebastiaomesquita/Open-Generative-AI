@@ -295,6 +295,7 @@ async function generate(params, win) {
             fps: 8,
             cameraMove: params.cameraMove || 'none',
             cameraStrength: Number(params.cameraStrength) || 0.8,
+            framesPrefix: params.framesPrefix || '',
         });
         maxMs = 45 * 60 * 1000;
     } else if (params.kind === 'video') {
@@ -333,6 +334,20 @@ async function generate(params, win) {
     const promptId = await submit(graph);
     const files = await waitFor(promptId, onProgress, maxMs);
     if (!files.length) throw new Error('A geração terminou sem produzir arquivo.');
+
+    // When frames were requested the caller is going to assemble them with
+    // ffmpeg, so hand back paths on disk instead of inlining a whole sequence.
+    if (params.framesPrefix) {
+        emit(win, { status: 'completed', progress: 1, message: 'Quadros prontos' });
+        return {
+            frames: files.map((f) => path.join(install.dir, 'output', f.subfolder || '', f.filename)),
+            outputDir: path.join(install.dir, 'output', files[0].subfolder || ''),
+            count: files.length,
+            seed,
+            engine: 'comfyui',
+            cost_usd: 0,
+        };
+    }
 
     onProgress({ status: 'in_progress', progress: 0.98, message: 'Carregando o resultado...' });
     const urls = [];

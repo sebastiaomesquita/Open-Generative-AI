@@ -105,7 +105,7 @@ const CAMERA_MOVES = {
  * the motion module was trained on 16 frames, so going far past that degrades
  * rather than extends.
  */
-function animateDiff({ checkpoint, motionModule, prompt, negativePrompt = '', width, height, frames = 16, steps = 20, cfg = 7.5, seed, fps = 8, cameraMove = 'none', cameraStrength = 0.8 }) {
+function animateDiff({ checkpoint, motionModule, prompt, negativePrompt = '', width, height, frames = 16, steps = 20, cfg = 7.5, seed, fps = 8, cameraMove = 'none', cameraStrength = 0.8, framesPrefix = '' }) {
     const graph = {
         ckpt: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: checkpoint } },
         motion: { class_type: 'ADE_LoadAnimateDiffModel', inputs: { model_name: motionModule } },
@@ -138,7 +138,12 @@ function animateDiff({ checkpoint, motionModule, prompt, negativePrompt = '', wi
         },
     };
     graph.dec = { class_type: 'VAEDecode', inputs: { samples: ['run', 0], vae: ['ckpt', 2] } };
-    graph.save = { class_type: 'SaveAnimatedWEBP', inputs: { images: ['dec', 0], filename_prefix: 'ogai_motion', fps, lossless: false, quality: 85, method: 'default' } };
+    // A PNG sequence, not an animated webp, when the frames are going to be
+    // assembled: ffmpeg cannot decode the webp ComfyUI writes (it trips on the
+    // EXIF header), and frames are what xfade needs anyway.
+    graph.save = framesPrefix
+        ? { class_type: 'SaveImage', inputs: { images: ['dec', 0], filename_prefix: framesPrefix } }
+        : { class_type: 'SaveAnimatedWEBP', inputs: { images: ['dec', 0], filename_prefix: 'ogai_motion', fps, lossless: false, quality: 85, method: 'default' } };
     return graph;
 }
 

@@ -56,6 +56,20 @@ contextBridge.exposeInMainWorld('localAI', {
         cancel:   () => ipcRenderer.invoke('comfy:cancel'),
     },
 
+    // Composition: brief in, finished piece out. The choices — camera move,
+    // transition, whether there is a title — are made from the brief.
+    compose: {
+        plan:   (params) => ipcRenderer.invoke('compose:plan', params),
+        run:    (params) => ipcRenderer.invoke('compose:run', params),
+        cancel: () => ipcRenderer.invoke('compose:cancel'),
+        themes: () => ipcRenderer.invoke('compose:themes'),
+        onProgress: (callback) => {
+            const listener = (_, data) => callback(data);
+            ipcRenderer.on('compose:progress', listener);
+            return () => ipcRenderer.removeListener('compose:progress', listener);
+        },
+    },
+
     // Progress events — both engines emit on local-ai:progress
     onProgress: (callback) => {
         const listener = (_, data) => callback(data);
